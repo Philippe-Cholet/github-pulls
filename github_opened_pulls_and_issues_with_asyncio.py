@@ -5,7 +5,7 @@ import bs4
 import asyncio
 from datetime import datetime
 from os import startfile
-from time import time
+from time import perf_counter
 # Awesome decorator inspired by Veky (from CheckiO).
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
@@ -157,8 +157,11 @@ repos_with_issues = []
 
 
 @aggregate(asyncio.run)
-async def opened(lst, repos, what, look_issues=False):
-    async def look_github_page(user, repo):
+async def opened(repos: list, what: str, look_issues: bool = False) -> list:
+    """ Look "what" in the given repositories,
+        and issues count when look_issues to know if there are issues to look.
+        If it's the case, add the repo to repos_with_issues. """
+    async def look_github_page(user: str, repo: str):
         url = f'{GITHUB}/{user}/{repo}/{what}'
         response = await session.request('GET', url)
         text = await response.text()
@@ -175,11 +178,12 @@ async def opened(lst, repos, what, look_issues=False):
             since = now - datetime.strptime(
                 opened_by.find('relative-time')['datetime'],
                 '%Y-%m-%dT%H:%M:%SZ')
-            x = since, user, repo, link.text, link['href'], opened_by.a.text
-            lst.append(x)
+            return since, user, repo, link.text, link['href'], opened_by.a.text
     async with aiohttp.ClientSession() as session:
         tasks = (look_github_page(user, repo) for user, repo in repos)
-        await asyncio.gather(*tasks)
+        all_results = await asyncio.gather(*tasks)
+        interesting_results = filter(None, all_results)
+        return sorted(interesting_results)
 
 
 CSS = '''
@@ -223,13 +227,13 @@ def html(list_opened, what):
 filename = 'opened_pulls_and_issues.html'
 now = datetime.now()
 
-pulls, issues = [], []
-timing = - time()
-opened(pulls, REPOS, 'pulls', look_issues=True)
-opened(issues, repos_with_issues, 'issues')
-timing += time()
-pulls.sort()
-issues.sort()
+timing = - perf_counter()
+# Look pulls pages of all repositories: looking for pull requests,
+# and the number of issues (update `repos_with_issues`).
+pulls = opened(REPOS, 'pulls', look_issues=True)
+# Then look issues pages when there are issues.
+issues = opened(repos_with_issues, 'issues')
+timing += perf_counter()
 
 nb_webpages = len(REPOS) + len(repos_with_issues)
 table_pulls = '' if not pulls else html(pulls, 'pull request')
@@ -249,7 +253,7 @@ if nb_pulls or nb_issues:
     <body>
         <p>
             Took {timing:.1f} seconds
-            to open & scrap {nb_webpages} github pages,
+            to open & parse {nb_webpages} github pages,
             obtain {nb_pulls} opened pull request(s)
             and {nb_issues} opened issue(s).
         </p>
