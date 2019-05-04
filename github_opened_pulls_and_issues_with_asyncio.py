@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 from os import startfile
 from time import perf_counter
+from itertools import chain
 # Awesome decorator inspired by Veky (from CheckiO).
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
@@ -156,34 +157,41 @@ REPOS = [(user, repo) for user, repos in REPOS.items() for repo in repos]
 repos_with_issues = []
 
 
+def parser(html_text: str, user: str, repo: str, look_issues: bool):
+    soup = bs4.BeautifulSoup(html_text, 'html.parser')
+    divs = soup.findAll('div', {'class': 'float-left col-9 lh-condensed p-2'})
+    if look_issues:
+        # Not right for all repos!
+        count_issues = soup.find('span', {'class': 'Counter'})
+        if count_issues is not None and int(count_issues.text):
+            repos_with_issues.append((user, repo))
+    for div in divs:
+        link, opened_by = div.a, div.find('span', {'class': 'opened-by'})
+        since = now - datetime.strptime(
+            opened_by.find('relative-time')['datetime'],
+            '%Y-%m-%dT%H:%M:%SZ')
+        yield since, user, repo, link.text, link['href'], opened_by.a.text
+
+
+async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
+    response = await session.request('GET', url)
+    return await response.text()
+
+
 @aggregate(asyncio.run)
 async def opened(repos: list, what: str, look_issues: bool = False) -> list:
     """ Look "what" in the given repositories,
         and issues count when look_issues to know if there are issues to look.
         If it's the case, add the repo to repos_with_issues. """
-    async def look_github_page(user: str, repo: str):
-        url = f'{GITHUB}/{user}/{repo}/{what}'
-        response = await session.request('GET', url)
-        text = await response.text()
-        soup = bs4.BeautifulSoup(text, 'html.parser')
-        divs = soup.findAll('div',
-                            {'class': 'float-left col-9 lh-condensed p-2'})
-        if look_issues:
-            # Not right for all repos!
-            count_issues = soup.find('span', {'class': 'Counter'})
-            if count_issues is not None and int(count_issues.text):
-                repos_with_issues.append((user, repo))
-        for div in divs:
-            link, opened_by = div.a, div.find('span', {'class': 'opened-by'})
-            since = now - datetime.strptime(
-                opened_by.find('relative-time')['datetime'],
-                '%Y-%m-%dT%H:%M:%SZ')
-            return since, user, repo, link.text, link['href'], opened_by.a.text
+    async def parser_what_from(github_repo) -> list:
+        user, repo = github_repo
+        text = await get_html_text(session, f'{GITHUB}/{user}/{repo}/{what}')
+        return list(parser(text, user, repo, look_issues))
+
     async with aiohttp.ClientSession() as session:
-        tasks = (look_github_page(user, repo) for user, repo in repos)
-        all_results = await asyncio.gather(*tasks)
-        interesting_results = filter(None, all_results)
-        return sorted(interesting_results)
+        tasks = map(parser_what_from, repos)
+        results = await asyncio.gather(*tasks)
+        return sorted(chain.from_iterable(results))
 
 
 CSS = '''
