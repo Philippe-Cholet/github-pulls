@@ -158,8 +158,15 @@ repos_with_issues = []
 
 
 def parser(html_text: str, user: str, repo: str, look_issues: bool):
+    CLASSES = {'float-left', 'lh-condensed', 'p-2'}
+
+    def search(tag: bs4.Tag) -> bool:
+        """ Is it a div tag for a pull request or an issue ? """
+        return (tag.name == 'div' and tag.has_attr('class') and
+                CLASSES <= set(tag.attrs['class']))
+
     soup = bs4.BeautifulSoup(html_text, 'html.parser')
-    divs = soup.findAll('div', {'class': 'float-left col-9 lh-condensed p-2'})
+    divs = soup.findAll(search)
     if look_issues:
         # Not right for all repos!
         count_issues = soup.find('span', {'class': 'Counter'})
@@ -174,8 +181,8 @@ def parser(html_text: str, user: str, repo: str, look_issues: bool):
 
 
 async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
-    response = await session.request('GET', url)
-    return await response.text()
+    async with session.get(url) as response:
+        return await response.text()
 
 
 @aggregate(asyncio.run)
