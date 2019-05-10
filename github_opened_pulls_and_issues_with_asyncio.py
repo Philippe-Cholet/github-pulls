@@ -215,7 +215,7 @@ a { text-decoration: none; color: inherit; }
 
 
 @aggregate(''.join)
-def html(list_opened, what):
+def html_table(list_opened: list, what: str):
     yield f'''
 <table>
     <caption>Opened {what.lower()}s</caption>
@@ -233,14 +233,14 @@ def html(list_opened, what):
         <td><a href="{GITHUB}/{user}/{repo}">{repo}</a></td>
         <td><a href="{GITHUB}{link}">{title}</a></td>
         <td><a href="{GITHUB}/{opened_by}">{opened_by}</a></td>
-        <td>{str(since)[:-7]}</td>
+        <td>{since}</td>
     </tr>'''
     yield '''
 </table>'''
 
 
 filename = 'opened_pulls_and_issues.html'
-now = datetime.now()
+now = datetime.now().replace(microsecond=0)
 
 timing = - perf_counter()
 # Look pulls pages of all repositories: looking for pull requests,
@@ -251,9 +251,9 @@ issues = opened(repos_with_issues, 'issues')
 timing += perf_counter()
 
 nb_webpages = len(REPOS) + len(repos_with_issues)
-table_pulls = '' if not pulls else html(pulls, 'pull request')
+table_pulls = '' if not pulls else html_table(pulls, 'pull request')
 nb_pulls = table_pulls.count('<tr>')
-table_issues = '' if not issues else html(issues, 'issue')
+table_issues = '' if not issues else html_table(issues, 'issue')
 nb_issues = table_issues.count('<tr>')
 
 if nb_pulls or nb_issues:
