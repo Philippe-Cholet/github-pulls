@@ -7,9 +7,23 @@ from datetime import datetime
 from os import startfile
 from time import perf_counter
 from itertools import chain
+from argparse import ArgumentParser
 # Awesome decorator inspired by Veky (from CheckiO).
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
+
+
+parser = ArgumentParser(description='Parse a list of github '
+                        'repositories for opened pull requests & issues.')
+parser.add_argument('-d', '--days', type=int,
+                    # default=1,  # for a simple daily use.
+                    help='only ones opened in the last ... days (all if None)')
+args = parser.parse_args()
+
+
+def recent_enough(timedelta) -> bool:
+    return args.days is None or timedelta.total_seconds() < 60*60*24*args.days
+
 
 GITHUB = 'https://github.com'
 
@@ -54,7 +68,7 @@ REPOS = {
         'checkio-task-most-wanted-letter',
         'checkio-task-runner',
         'checkio-task-tester',
-    ],
+        ],
     'oduvan': [
         'checkio-mission-a-words',
         'checkio-mission-all-in-row-iter',
@@ -157,7 +171,7 @@ REPOS = [(user, repo) for user, repos in REPOS.items() for repo in repos]
 repos_with_issues = []
 
 
-def parser(html_text: str, user: str, repo: str, look_issues: bool):
+def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
     CLASSES = {'float-left', 'lh-condensed', 'p-2'}
 
     def search(tag: bs4.Tag) -> bool:
@@ -177,7 +191,8 @@ def parser(html_text: str, user: str, repo: str, look_issues: bool):
         since = now - datetime.strptime(
             opened_by.find('relative-time')['datetime'],
             '%Y-%m-%dT%H:%M:%SZ')
-        yield since, user, repo, link.text, link['href'], opened_by.a.text
+        if recent_enough(since):
+            yield since, user, repo, link.text, link['href'], opened_by.a.text
 
 
 async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
@@ -193,7 +208,7 @@ async def opened(repos: list, what: str, look_issues: bool = False) -> list:
     async def parser_what_from(github_repo) -> list:
         user, repo = github_repo
         text = await get_html_text(session, f'{GITHUB}/{user}/{repo}/{what}')
-        return list(parser(text, user, repo, look_issues))
+        return list(github_parser(text, user, repo, look_issues))
 
     async with aiohttp.ClientSession() as session:
         tasks = map(parser_what_from, repos)
