@@ -12,11 +12,10 @@ from argparse import ArgumentParser
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 
-
 parser = ArgumentParser(description='Parse a list of github '
                         'repositories for opened pull requests & issues.')
 parser.add_argument('-d', '--days', type=int,
-                    # default=1,  # for a simple daily use.
+                    # default=7,  # for a simple weekly/daily use.
                     help='only ones opened in the last ... days (all if None)')
 args = parser.parse_args()
 
@@ -171,26 +170,29 @@ REPOS = [(user, repo) for user, repos in REPOS.items() for repo in repos]
 repos_with_issues = []
 
 
+def github_div_search(tag: bs4.Tag) -> bool:
+    """ Is it a div tag for a pull request or an issue ? """
+    return (tag.name == 'div' and tag.has_attr('class') and
+            {'float-left', 'lh-condensed', 'p-2'} <= set(tag.attrs['class']))
+
+
+def github_number_of_issues(soup: bs4.BeautifulSoup) -> int:
+    # Not right for all repos!
+    count_issues = soup.find('span', {'class': 'Counter'})
+    return count_issues is not None and int(count_issues.text)
+
+
+now = datetime.now().replace(microsecond=0)
+
+
 def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
-    CLASSES = {'float-left', 'lh-condensed', 'p-2'}
-
-    def search(tag: bs4.Tag) -> bool:
-        """ Is it a div tag for a pull request or an issue ? """
-        return (tag.name == 'div' and tag.has_attr('class') and
-                CLASSES <= set(tag.attrs['class']))
-
     soup = bs4.BeautifulSoup(html_text, 'html.parser')
-    divs = soup.findAll(search)
-    if look_issues:
-        # Not right for all repos!
-        count_issues = soup.find('span', {'class': 'Counter'})
-        if count_issues is not None and int(count_issues.text):
-            repos_with_issues.append((user, repo))
-    for div in divs:
+    if look_issues and github_number_of_issues(soup):
+        repos_with_issues.append((user, repo))
+    for div in soup.findAll(github_div_search):
         link, opened_by = div.a, div.find('span', {'class': 'opened-by'})
-        since = now - datetime.strptime(
-            opened_by.find('relative-time')['datetime'],
-            '%Y-%m-%dT%H:%M:%SZ')
+        opening_time = opened_by.find('relative-time')['datetime']
+        since = now - datetime.strptime(opening_time, '%Y-%m-%dT%H:%M:%SZ')
         if recent_enough(since):
             yield since, user, repo, link.text, link['href'], opened_by.a.text
 
@@ -231,7 +233,8 @@ a { text-decoration: none; color: inherit; }
 
 @aggregate(''.join)
 def html_table(list_opened: list, what: str):
-    yield f'''
+    if list_opened:  # Otherwise, it would be an empty table, so yield nothing.
+        yield f'''
 <table>
     <caption>Opened {what.lower()}s</caption>
     <thead>
@@ -241,8 +244,8 @@ def html_table(list_opened: list, what: str):
         <th>Opened by</th>
         <th>Since</th>
     </thead>'''
-    for since, user, repo, title, link, opened_by in list_opened:
-        yield f'''
+        for since, user, repo, title, link, opened_by in list_opened:
+            yield f'''
     <tr>
         <td><a href="{GITHUB}/{user}">{user}</a></td>
         <td><a href="{GITHUB}/{user}/{repo}">{repo}</a></td>
@@ -250,31 +253,23 @@ def html_table(list_opened: list, what: str):
         <td><a href="{GITHUB}/{opened_by}">{opened_by}</a></td>
         <td>{since}</td>
     </tr>'''
-    yield '''
+        yield '''
 </table>'''
 
 
-filename = 'opened_pulls_and_issues.html'
-now = datetime.now().replace(microsecond=0)
+def main(filename):
+    timing = - perf_counter()
+    # Look pulls pages of all repositories: looking for pull requests,
+    # and the number of issues (update `repos_with_issues`).
+    pulls = opened(REPOS, 'pulls', look_issues=True)
+    # Then look issues pages when there are issues.
+    issues = opened(repos_with_issues, 'issues')
+    timing += perf_counter()
 
-timing = - perf_counter()
-# Look pulls pages of all repositories: looking for pull requests,
-# and the number of issues (update `repos_with_issues`).
-pulls = opened(REPOS, 'pulls', look_issues=True)
-# Then look issues pages when there are issues.
-issues = opened(repos_with_issues, 'issues')
-timing += perf_counter()
-
-nb_webpages = len(REPOS) + len(repos_with_issues)
-table_pulls = '' if not pulls else html_table(pulls, 'pull request')
-nb_pulls = table_pulls.count('<tr>')
-table_issues = '' if not issues else html_table(issues, 'issue')
-nb_issues = table_issues.count('<tr>')
-
-if nb_pulls or nb_issues:
-    # Otherwise, there is nothing to see so we don't show anything.
-    with open(filename, 'w') as file:
-        file.write(f'''<!DOCTYPE html>
+    if pulls or issues:
+        # Otherwise, there is nothing to see so we don't show anything.
+        with open(filename, 'w') as file:
+            file.write(f'''<!DOCTYPE html>
 <html>
     <head>
         <title>Opened pull requests and issues (sorted)</title>
@@ -283,13 +278,17 @@ if nb_pulls or nb_issues:
     <body>
         <p>
             Took {timing:.1f} seconds
-            to open & parse {nb_webpages} github pages,
-            obtain {nb_pulls} opened pull request(s)
-            and {nb_issues} opened issue(s).
+            to open & parse {len(REPOS) + len(repos_with_issues)} github pages,
+            obtain {len(pulls)} opened pull request(s)
+            and {len(issues)} opened issue(s).
         </p>
-        {table_pulls}
+        {html_table(pulls, 'pull request')}
         <br>
-        {table_issues}
+        {html_table(issues, 'issue')}
     </body>
 </html>''')
-    startfile(filename)
+        startfile(filename)
+
+
+if __name__ == '__main__':
+    main('opened_pulls_and_issues.html')
