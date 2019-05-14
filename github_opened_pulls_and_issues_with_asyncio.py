@@ -16,7 +16,7 @@ aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 parser = ArgumentParser(description='Parse a list of github '
                         'repositories for opened pull requests & issues.')
 parser.add_argument('-d', '--days', type=int,
-                    default=7,  # for a simple weekly/daily use.
+                    # default=7,  # for a simple weekly/daily use.
                     help='only ones opened in the last ... days (all if None)')
 args = parser.parse_args()
 
