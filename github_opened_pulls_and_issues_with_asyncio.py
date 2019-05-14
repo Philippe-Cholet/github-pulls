@@ -8,14 +8,15 @@ from os import startfile
 from time import perf_counter
 from itertools import chain
 from argparse import ArgumentParser
-# Awesome decorator inspired by Veky (from CheckiO).
+# Awesome decorator inspired by Veky (from py.checkio.org).
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 
+# ----------------------------- ArgumentParser ----------------------------- #
 parser = ArgumentParser(description='Parse a list of github '
                         'repositories for opened pull requests & issues.')
 parser.add_argument('-d', '--days', type=int,
-                    # default=7,  # for a simple weekly/daily use.
+                    default=7,  # for a simple weekly/daily use.
                     help='only ones opened in the last ... days (all if None)')
 args = parser.parse_args()
 
@@ -24,6 +25,7 @@ def recent_enough(timedelta) -> bool:
     return args.days is None or timedelta.total_seconds() < 60*60*24*args.days
 
 
+# -------------------------- Repositories to watch -------------------------- #
 GITHUB = 'https://github.com'
 
 # Write the repositories to watch in REPOS = {username: list of repos to watch}
@@ -170,6 +172,7 @@ REPOS = [(user, repo) for user, repos in REPOS.items() for repo in repos]
 repos_with_issues = []
 
 
+# ----------------------- Analyze github source code ----------------------- #
 def github_div_search(tag: bs4.Tag) -> bool:
     """ Is it a div tag for a pull request or an issue ? """
     return (tag.name == 'div' and tag.has_attr('class') and
@@ -186,6 +189,10 @@ now = datetime.now().replace(microsecond=0)
 
 
 def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
+    """ Parse github source code to detect pulls/issues
+        and generate useful contents, when there are recent enough.
+        Add the repo to repos_with_issues when
+        look_issues is True and there are issues. """
     soup = bs4.BeautifulSoup(html_text, 'html.parser')
     if look_issues and github_number_of_issues(soup):
         repos_with_issues.append((user, repo))
@@ -197,6 +204,7 @@ def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
             yield since, user, repo, link.text, link['href'], opened_by.a.text
 
 
+# --------- Asynchronous way to get github pages, pulls and issues --------- #
 async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
     async with session.get(url) as response:
         return await response.text()
@@ -204,9 +212,8 @@ async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
 
 @aggregate(asyncio.run)
 async def opened(repos: list, what: str, look_issues: bool = False) -> list:
-    """ Look "what" in the given repositories,
-        and issues count when look_issues to know if there are issues to look.
-        If it's the case, add the repo to repos_with_issues. """
+    """ Look "what" in the given repositories, in an efficient way.
+        Return list of generated contents. """
     async def parser_what_from(github_repo) -> list:
         user, repo = github_repo
         text = await get_html_text(session, f'{GITHUB}/{user}/{repo}/{what}')
@@ -218,6 +225,7 @@ async def opened(repos: list, what: str, look_issues: bool = False) -> list:
         return sorted(chain.from_iterable(results))
 
 
+# ----------------------------- HTML/CSS output ----------------------------- #
 CSS = '''
 body { background-color: #CAEBFB; }
 table { border-collapse: collapse; }
@@ -233,6 +241,7 @@ a { text-decoration: none; color: inherit; }
 
 @aggregate(''.join)
 def html_table(list_opened: list, what: str):
+    """ Previously generated content presented in an html table. """
     if list_opened:  # Otherwise, it would be an empty table, so yield nothing.
         yield f'''
 <table>
@@ -257,7 +266,10 @@ def html_table(list_opened: list, what: str):
 </table>'''
 
 
-def main(filename):
+def main(filename: str):
+    """ Looking for opened pulls and issues.
+        Write and open a great html file with them,
+        only when there is something to show. """
     timing = - perf_counter()
     # Look pulls pages of all repositories: looking for pull requests,
     # and the number of issues (update `repos_with_issues`).
@@ -267,7 +279,6 @@ def main(filename):
     timing += perf_counter()
 
     if pulls or issues:
-        # Otherwise, there is nothing to see so we don't show anything.
         with open(filename, 'w') as file:
             file.write(f'''<!DOCTYPE html>
 <html>
