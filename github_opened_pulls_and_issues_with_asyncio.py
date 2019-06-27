@@ -8,14 +8,20 @@ from os import startfile
 from time import perf_counter
 from itertools import chain
 from json import load
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 # Awesome decorator inspired by Veky (from py.checkio.org).
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 
 # ----------------------------- ArgumentParser ----------------------------- #
 parser = ArgumentParser(description='Parse a list of github '
-                        'repositories for opened pull requests & issues.')
+                        'repositories for opened pull requests & issues.',
+                        formatter_class=ArgumentDefaultsHelpFormatter,
+                        # then help message show default values.
+                        )
+parser.add_argument('-j', '--json',
+                    default='repos.json',  # Update that if you want.
+                    help='JSON file with repositories to watch / parse.')
 parser.add_argument('-d', '--days', type=int,
                     # default=7,  # for a simple weekly/daily use.
                     help='only ones opened in the last ... days (all if None)')
@@ -30,7 +36,7 @@ def recent_enough(timedelta) -> bool:
 GITHUB = 'https://github.com'
 
 # Write the repositories to watch in REPOS = {username: list of repos to watch}
-with open('repos.json') as f:
+with open(args.json) as f:
     REPOS = [(user, repo) for user, repos in load(f).items() for repo in repos]
 repos_with_issues = []
 
