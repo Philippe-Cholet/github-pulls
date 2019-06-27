@@ -1,3 +1,9 @@
+# The script requires python>=3.6 because of f-strings.
+# This script will go through all given repositories (in a json file) to find
+# pull requests and issues, and open a single webpage with links to them.
+# You can restrict the search to the ... last days.
+# In order to do it efficiently, it will load webpages in an asynchronous way.
+
 # Not stdlib
 import aiohttp
 import bs4
@@ -35,7 +41,6 @@ def recent_enough(timedelta) -> bool:
 # -------------------------- Repositories to watch -------------------------- #
 GITHUB = 'https://github.com'
 
-# Write the repositories to watch in REPOS = {username: list of repos to watch}
 with open(args.json) as f:
     REPOS = [(user, repo) for user, repos in load(f).items() for repo in repos]
 repos_with_issues = []
