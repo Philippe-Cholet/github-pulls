@@ -308,7 +308,7 @@ def main(filename: str):
     timing += perf_counter()
 
     if pulls or issues:
-        with open(filename, 'w') as file:
+        with open(filename, 'w', encoding='utf-8') as file:
             file.write(f'''<!DOCTYPE html>
 <html>
     <head>
