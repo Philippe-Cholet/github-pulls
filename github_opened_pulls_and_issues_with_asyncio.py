@@ -39,6 +39,25 @@ REPOS = {
         'checkio-mission-signpost',
         'checkio-mission-text-formatting',
         ],
+    'kurosawa4434': [
+        'checkio-mission-barcode-reader',
+        'checkio-mission-boundary-blocks',
+        'checkio-mission-broken-window',
+        'checkio-mission-climbing-route',
+        'checkio-mission-delivery-drone',
+        'checkio-mission-evenly-spaced-trees',
+        'checkio-mission-fast-train',
+        'checkio-mission-flood-area',
+        'checkio-mission-fortress-cannons',
+        'checkio-mission-identify-block',
+        'checkio-mission-nonogram-row',
+        'checkio-mission-paper-dice',
+        'checkio-mission-seven-segment',
+        'checkio-mission-square-board',
+        'checkio-mission-supply-line',
+        'checkio-mission-unfair-districts',
+        'checkio-mission-wall-keeper',
+        ],
     'CheckiO': [
         'checkio-mission-ascending-list',
         'checkio-mission-chicken-hunt',
@@ -179,10 +198,20 @@ def github_div_search(tag: bs4.Tag) -> bool:
             {'float-left', 'lh-condensed', 'p-2'} <= set(tag.attrs['class']))
 
 
-def github_number_of_issues(soup: bs4.BeautifulSoup) -> int:
-    # Not right for all repos!
-    count_issues = soup.find('span', {'class': 'Counter'})
-    return count_issues is not None and int(count_issues.text)
+def github_number_of_issues(soup: bs4.BeautifulSoup,
+                            user: str, repo: str) -> int:
+    # <a ... href="/USER/REPOSITORY_NAME/issues" ...>
+    #     <svg class="octicon octicon-issue-opened" ...>...</svg>
+    #     <span itemprop="name">Issues</span>
+    #     <span class="Counter">NUMBER WE WANT</span>
+    #     <meta itemprop="position" content="2">
+    # </a>
+    link = soup.find('a', {'href': f'/{user}/{repo}/issues'})
+    try:
+        span = link.find('span', {'class': 'Counter'})
+        return int(span.text)
+    except AttributeError:  # link or span can be None.
+        return 0
 
 
 now = datetime.now().replace(microsecond=0)
@@ -194,7 +223,7 @@ def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
         Add the repo to repos_with_issues when
         look_issues is True and there are issues. """
     soup = bs4.BeautifulSoup(html_text, 'html.parser')
-    if look_issues and github_number_of_issues(soup):
+    if look_issues and github_number_of_issues(soup, user, repo):
         repos_with_issues.append((user, repo))
     for div in soup.findAll(github_div_search):
         link, opened_by = div.a, div.find('span', {'class': 'opened-by'})
