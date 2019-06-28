@@ -4,22 +4,24 @@ This personal command line utility allow to efficiently go through a lot of gith
 You can restrict the search to the lastest days, and sort the results according to opening dates, (owner, repo), or author.
 
 ### Current help message
-    usage: github_pulls.py [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS]
-                           [-s {opening,repo,author}]
+```
+usage: github_pulls.py [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS]
+                       [-s {opening,repo,author}]
 
-    Parse github repositories for opened pull requests & issues.
+Parse github repositories for opened pull requests & issues.
 
-    optional arguments:
-      -h, --help            show this help message and exit
-      -u USER [USER ...], --user USER [USER ...]
-                            Look users' repositories.
-      -j JSON, --json JSON  JSON file with repositories (default: first json file
-                            found in current folder).
-      -d DAYS, --days DAYS  only ones opened in the last ... days (default: all).
-      -s {opening,repo,author}, --sort {opening,repo,author}
-                            sorting output (default: by opening)
+optional arguments:
+  -h, --help            show this help message and exit
+  -u USER [USER ...], --user USER [USER ...]
+                        Look users' repositories.
+  -j JSON, --json JSON  JSON file with repositories (default: first json file
+                        found in current folder).
+  -d DAYS, --days DAYS  only ones opened in the last ... days (default: all).
+  -s {opening,repo,author}, --sort {opening,repo,author}
+                        sorting output (default: by opening)
 
-    Give github usernames or a json file {user: [repository, ...]}.
+Give github usernames or a json file {user: [repository, ...]}.
+```
 
 ### Requirements
 - `python 3.6+` because I like f-strings.
