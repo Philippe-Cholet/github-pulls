@@ -1,15 +1,3 @@
-"""The script requires python>=3.6 because of f-strings.
-This script will go through a lot of github repositories
-(from given users or repos) to find pull requests and issues,
-and open a single webpage with links to them.
-You can restrict the search to the ... last days and sort the results.
-In order to do it efficiently, it will load webpages in an asynchronous way.
-
-[version 2] I just add user (thanks to github api) and sort arguments:
-
-Coming soon [version 3]
-    - Fix an issue: Only get the last 25 open issues/pulls of each repo.
-"""
 # Not stdlib
 import aiohttp  # ClientSession
 import bs4  # BeautifulSoup
