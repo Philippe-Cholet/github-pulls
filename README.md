@@ -1,5 +1,5 @@
 # GitHub Pulls
-This script allow to go efficiently through a lot of github repositories (from given users or given repos in a json file) to find pull requests and issues, and open a single webpage with links to them.
+This personal command line utility allow to efficiently go through a lot of github repositories (from given users or given repos in a json file) to find pull requests and issues, and render results in a single webpage with links to them.
 
 You can restrict the search to the lastest days, and sort the results according to opening dates, (owner, repo), or author.
 
@@ -28,6 +28,10 @@ Give github usernames or a json file {user: [repository, ...]}.
 - `aiohttp` to load webpages in an asynchronous way for efficiency.
 - `bs4` to parse html source code.
 
-### Coming soon or later
+### Upcoming improvements
 - Fix the issue "Only get the last 25 open issues/pulls of each repository."
-- Make the script installable to have `github-pulls [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS] [-s {opening,repo,author}]`.
+- Make the script installable with `py -m pîp install [-e] .` to be able to do `github-pulls [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS] [-s {opening,repo,author}]` in any folder.
+- Eventually add it to PyPi, but it's not my current goal.
+
+#### Rendering example
+![Rendering example](rendering_example.png "Rendering example")
