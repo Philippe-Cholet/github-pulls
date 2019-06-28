@@ -1,49 +1,86 @@
-# The script requires python>=3.6 because of f-strings.
-# This script will go through all given repositories (in a json file) to find
-# pull requests and issues, and open a single webpage with links to them.
-# You can restrict the search to the ... last days.
-# In order to do it efficiently, it will load webpages in an asynchronous way.
+"""The script requires python>=3.6 because of f-strings.
+This script will go through a lot of github repositories
+(from given users or repos) to find pull requests and issues,
+and open a single webpage with links to them.
+You can restrict the search to the ... last days and sort the results.
+In order to do it efficiently, it will load webpages in an asynchronous way.
 
+[version 2] I just add user (thanks to github api) and sort arguments:
+
+Coming soon [version 3]
+    - Fix an issue: Only get the last 25 open issues/pulls of each repo.
+"""
 # Not stdlib
-import aiohttp
-import bs4
+import aiohttp  # ClientSession
+import bs4  # BeautifulSoup
 # Stdlib
-import asyncio
+import asyncio  # run, gather
 from datetime import datetime
-from os import startfile
+import os  # listdir, startfile
 from time import perf_counter
-from itertools import chain
-from json import load
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+import itertools as it  # chain, count
+import json  # load
+from argparse import ArgumentParser
 # Awesome decorator inspired by Veky (from py.checkio.org).
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 
+
+# ---------------------- Constants & Global variables ---------------------- #
+GITHUB = 'https://github.com'
+GITHUB_API = 'https://api.github.com'
+
+now = datetime.now().replace(microsecond=0)
+nb_web_requests = 0
+repos_with_issues = []
+
 # ----------------------------- ArgumentParser ----------------------------- #
-parser = ArgumentParser(description='Parse a list of github '
-                        'repositories for opened pull requests & issues.',
-                        formatter_class=ArgumentDefaultsHelpFormatter,
-                        # then help message show default values.
-                        )
+parser = ArgumentParser(
+    description='Parse github repositories for opened pull requests & issues.',
+    epilog="Give github usernames or a json file {user: [repository, ...]}.")
+# Simple use: by github usernames.
+parser.add_argument('-u', '--user', nargs='+',
+                    help="Look users' repositories.")
+# Customizable use with a json file.
 parser.add_argument('-j', '--json',
-                    default='repos.json',  # Update that if you want.
-                    help='JSON file with repositories to watch / parse.')
+                    help='JSON file with repositories '
+                    '(default: first json file found in current folder).')
+# Simple filter of results: useful to get only latest results, if there has.
+days_default = None  # or 7 for a simple weekly/daily use.
 parser.add_argument('-d', '--days', type=int,
-                    # default=7,  # for a simple weekly/daily use.
-                    help='only ones opened in the last ... days (all if None)')
+                    default=days_default,
+                    help='only ones opened in the last ... days'
+                    f' (default: {days_default or "all"}).')
+# Sort the results for a better visualization.
+parser.add_argument('-s', '--sort',
+                    choices=['opening', 'repo', 'author'], default='opening',
+                    help='sorting output (default: by %(default)s)')
 args = parser.parse_args()
+
+
+def get_repos() -> list:
+    if args.user:
+        data = get_repos_to_watch_from(args.user)
+    else:
+        file = args.json or next(f for f in os.listdir('.')
+                                 if f.endswith('.json'))
+        with open(file) as f:
+            data = json.load(f)
+    return [(user, repo) for user, repos in data.items() for repo in repos]
 
 
 def recent_enough(timedelta) -> bool:
     return args.days is None or timedelta.total_seconds() < 60*60*24*args.days
 
 
-# -------------------------- Repositories to watch -------------------------- #
-GITHUB = 'https://github.com'
-
-with open(args.json) as f:
-    REPOS = [(user, repo) for user, repos in load(f).items() for repo in repos]
-repos_with_issues = []
+def sorting_key(x) -> tuple:
+    # x = (since, user, repo, title, link, opened_by)
+    if args.sort == 'opening':
+        return x
+    if args.sort == 'repo':
+        return x[1].casefold(), x[2].casefold(), x[0]
+    if args.sort == 'author':
+        return x[-1].casefold(), x[0]
 
 
 # ----------------------- Analyze github source code ----------------------- #
@@ -69,9 +106,6 @@ def github_number_of_issues(soup: bs4.BeautifulSoup,
         return 0
 
 
-now = datetime.now().replace(microsecond=0)
-
-
 def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
     """ Parse github source code to detect pulls/issues
         and generate useful contents, when there are recent enough.
@@ -88,16 +122,41 @@ def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
             yield since, user, repo, link.text, link['href'], opened_by.a.text
 
 
-# --------- Asynchronous way to get github pages, pulls and issues --------- #
+# ---------- Asynchronous way to get github api/pulls/issues pages ---------- #
+async def get_html_json(session: aiohttp.ClientSession, url: str) -> str:
+    global nb_web_requests
+    nb_web_requests += 1
+    async with session.get(url) as response:
+        return await response.json()
+
+
 async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
+    global nb_web_requests
+    nb_web_requests += 1
     async with session.get(url) as response:
         return await response.text()
 
 
 @aggregate(asyncio.run)
+async def get_repos_to_watch_from(users: list) -> dict:
+    async def task(user: str):
+        repos = []
+        for page in it.count(1):
+            url = f'{GITHUB_API}/users/{user}/repos?per_page=100&page={page}'
+            new_data = await get_html_json(session, url)
+            repos.extend(repo['name'] for repo in new_data
+                         if repo['open_issues'])  # or open pull requests
+            if len(new_data) < 100:
+                return user, repos
+
+    async with aiohttp.ClientSession() as session:
+        return dict(await asyncio.gather(*map(task, users)))
+
+
+@aggregate(asyncio.run)
 async def opened(repos: list, what: str, look_issues: bool = False) -> list:
     """ Look "what" in the given repositories, in an efficient way.
-        Return list of generated contents. """
+        Return sorted list of generated contents. """
     async def parser_what_from(github_repo) -> list:
         user, repo = github_repo
         text = await get_html_text(session, f'{GITHUB}/{user}/{repo}/{what}')
@@ -106,7 +165,7 @@ async def opened(repos: list, what: str, look_issues: bool = False) -> list:
     async with aiohttp.ClientSession() as session:
         tasks = map(parser_what_from, repos)
         results = await asyncio.gather(*tasks)
-        return sorted(chain.from_iterable(results))
+        return sorted(it.chain.from_iterable(results), key=sorting_key)
 
 
 # ----------------------------- HTML/CSS output ----------------------------- #
@@ -157,7 +216,7 @@ def main(filename: str):
     timing = - perf_counter()
     # Look pulls pages of all repositories: looking for pull requests,
     # and the number of issues (update `repos_with_issues`).
-    pulls = opened(REPOS, 'pulls', look_issues=True)
+    pulls = opened(get_repos(), 'pulls', look_issues=True)
     # Then look issues pages when there are issues.
     issues = opened(repos_with_issues, 'issues')
     timing += perf_counter()
@@ -172,8 +231,7 @@ def main(filename: str):
     </head>
     <body>
         <p>
-            Took {timing:.1f} seconds
-            to open & parse {len(REPOS) + len(repos_with_issues)} github pages,
+            Took {timing:.1f} seconds to do {nb_web_requests} web requests,
             obtain {len(pulls)} opened pull request(s)
             and {len(issues)} opened issue(s).
         </p>
@@ -182,7 +240,7 @@ def main(filename: str):
         {html_table(issues, 'issue')}
     </body>
 </html>''')
-        startfile(filename)
+        os.startfile(filename)
 
 
 if __name__ == '__main__':
