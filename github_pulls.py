@@ -46,6 +46,7 @@ args = parser.parse_args()
 
 
 def get_repos() -> list:
+    """ Define repos to watch according to given arguments user/json. """
     if args.user:
         data = get_repos_to_watch_from(args.user)
     else:
@@ -61,6 +62,7 @@ def recent_enough(timedelta) -> bool:
 
 
 def sorting_key(x) -> tuple:
+    """ Sort pulls and issues according to sort argument. """
     # x = (since, user, repo, title, link, opened_by)
     if args.sort == 'opening':
         return x
@@ -79,6 +81,7 @@ def github_div_search(tag: bs4.Tag) -> bool:
 
 def github_number_of_issues(soup: bs4.BeautifulSoup,
                             user: str, repo: str) -> int:
+    """ Find the number of issues in soup of '/user/repo/pulls'. """
     # <a ... href="/USER/REPOSITORY_NAME/issues" ...>
     #     <svg class="octicon octicon-issue-opened" ...>...</svg>
     #     <span itemprop="name">Issues</span>
@@ -126,6 +129,7 @@ async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
 
 @aggregate(asyncio.run)
 async def get_repos_to_watch_from(users: list) -> dict:
+    """ Dict of all repositories of each user, thanks to github api. """
     async def task(user: str):
         repos = []
         for page in it.count(1):
@@ -197,6 +201,7 @@ def html_table(list_opened: list, what: str):
 
 
 def html_template(timing: float, pulls: list, issues: list) -> str:
+    """ Create full html code source. """
     return f'''<!DOCTYPE html>
 <html>
     <head>
