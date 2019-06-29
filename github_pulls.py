@@ -44,16 +44,34 @@ parser.add_argument('-s', '--sort',
                     help='sorting output (default: by %(default)s)')
 args = parser.parse_args()
 
+if args.days is not None and args.days <= 0:
+    parser.error('days argument must be positive.')
+
 
 def get_repos() -> list:
     """ Define repos to watch according to given arguments user/json. """
     if args.user:
-        data = get_repos_to_watch_from(args.user)
+        try:
+            data = get_repos_to_watch_from(args.user)
+        except aiohttp.ClientResponseError:
+            parser.error('Failed to get repositories from users. '
+                         'One user may not exists.')
     else:
-        file = args.json or next(f for f in os.listdir('.')
-                                 if f.endswith('.json'))
-        with open(file) as f:
-            data = json.load(f)
+        try:
+            file = args.json or next(f for f in os.listdir('.')
+                                     if f.endswith('.json'))
+            with open(file) as f:
+                data = json.load(f)
+        except (StopIteration, FileNotFoundError):
+            parser.error('No json file found.')
+        except json.JSONDecodeError:
+            parser.error('Failed to decode the json file.')
+    if not (isinstance(data, dict) and
+            all(isinstance(user, str) and isinstance(repos, list) and
+                all(isinstance(repo, str) for repo in repos)
+                for user, repos in data.items())):
+        parser.error("The given file does not have the appropriate "
+                     "structure: {user1: [repo1, ...], ...}.")
     return [(user, repo) for user, repos in data.items() for repo in repos]
 
 
@@ -140,7 +158,7 @@ async def get_repos_to_watch_from(users: list) -> dict:
             if len(new_data) < 100:
                 return user, repos
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(raise_for_status=True) as session:
         return dict(await asyncio.gather(*map(task, users)))
 
 
@@ -153,7 +171,7 @@ async def opened(repos: list, what: str, look_issues: bool = False) -> list:
         text = await get_html_text(session, f'{GITHUB}/{user}/{repo}/{what}')
         return list(github_parser(text, user, repo, look_issues))
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(raise_for_status=True) as session:
         tasks = map(parser_what_from, repos)
         results = await asyncio.gather(*tasks)
         return sorted(it.chain.from_iterable(results), key=sorting_key)
