@@ -26,9 +26,10 @@ Give github usernames or a json file {user: [repository, ...]}.
 ### Requirements
 - `python 3.6+` because I like f-strings.
 - `aiohttp` to load webpages in an asynchronous way for efficiency.
-- `bs4` to parse html source code.
+- `beautifulsoup4` to parse html source code.
 
 ### Upcoming improvements
+- Use github api to filter repositories given in json file to parse only ones with issues/pulls, it should increase speed.
 - Fix the issue "**Only get the last 25 open issues/pulls of each repository.**"
 - Make the script installable with `py -m pîp install [-e] .` to be able to do `github-pulls ...` in any folder.
 - Eventually add it to PyPi, but it's not my current goal.
