@@ -17,6 +17,7 @@ aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 # ---------------------- Constants & Global variables ---------------------- #
 GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
+OUTPUT = 'github-pulls.html'
 
 now = datetime.now().replace(microsecond=0)
 nb_web_requests = 0
@@ -197,21 +198,8 @@ def html_table(list_opened: list, what: str):
 </table>'''
 
 
-def main(filename: str):
-    """ Looking for opened pulls and issues.
-        Write and open a great html file with them,
-        only when there is something to show. """
-    timing = - perf_counter()
-    # Look pulls pages of all repositories: looking for pull requests,
-    # and the number of issues (update `repos_with_issues`).
-    pulls = opened(get_repos(), 'pulls', look_issues=True)
-    # Then look issues pages when there are issues.
-    issues = opened(repos_with_issues, 'issues')
-    timing += perf_counter()
-
-    if pulls or issues:
-        with open(filename, 'w', encoding='utf-8') as file:
-            file.write(f'''<!DOCTYPE html>
+def html_template(timing: float, pulls: list, issues: list) -> str:
+    return f'''<!DOCTYPE html>
 <html>
     <head>
         <title>Opened pull requests and issues (sorted)</title>
@@ -227,9 +215,29 @@ def main(filename: str):
         <br>
         {html_table(issues, 'issue')}
     </body>
-</html>''')
-        os.startfile(filename)
+</html>
+'''
+
+
+# -------------------------------- Main part -------------------------------- #
+def main():
+    """ Looking for opened pulls and issues.
+        Write and open a great html file with them,
+        only when there is something to show. """
+    timing = - perf_counter()
+    # Look pulls pages of all repositories: looking for pull requests,
+    # and the number of issues (update `repos_with_issues`).
+    pulls = opened(get_repos(), 'pulls', look_issues=True)
+    # Then look issues pages when there are issues.
+    issues = opened(repos_with_issues, 'issues')
+    timing += perf_counter()
+
+    if pulls or issues:
+        text = html_template(timing, pulls, issues)
+        with open(OUTPUT, 'w', encoding='utf-8') as file:
+            file.write(text)
+        os.startfile(OUTPUT)
 
 
 if __name__ == '__main__':
-    main('opened_pulls_and_issues.html')
+    main()
