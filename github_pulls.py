@@ -35,11 +35,9 @@ parser.add_argument('-j', '--json',
                     help='JSON file with repositories '
                     '(default: first json file found in current folder).')
 # Simple filter of results: useful to get only latest results, if there has.
-days_default = None  # or 7 for a simple weekly/daily use.
 parser.add_argument('-d', '--days', type=int,
-                    default=days_default,
                     help='only ones opened in the last ... days'
-                    f' (default: {days_default or "all"}).')
+                    ' (default: all).')
 # Sort the results for a better visualization.
 parser.add_argument('-s', '--sort',
                     choices=['opening', 'repo', 'author'], default='opening',
