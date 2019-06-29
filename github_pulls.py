@@ -66,13 +66,21 @@ def get_repos() -> list:
             parser.error('No json file found.')
         except json.JSONDecodeError:
             parser.error('Failed to decode the json file.')
-    if not (isinstance(data, dict) and
-            all(isinstance(user, str) and isinstance(repos, list) and
-                all(isinstance(repo, str) for repo in repos)
-                for user, repos in data.items())):
-        parser.error("The given file does not have the appropriate "
-                     "structure: {user1: [repo1, ...], ...}.")
-    return [(user, repo) for user, repos in data.items() for repo in repos]
+        if not (isinstance(data, dict) and
+                all(isinstance(user, str) and isinstance(repos, list) and
+                    all(isinstance(repo, str) for repo in repos)
+                    for user, repos in data.items())):
+            parser.error("The given file does not have the appropriate "
+                         "structure: {user1: [repo1, ...], ...}.")
+        users = list(data)
+        data = {(user, repo) for user, repos in data.items() for repo in repos}
+        try:
+            # Thanks to github api.
+            # We will only parse wanted repositories with issues/pulls.
+            data &= get_repos_to_watch_from(users)
+        except aiohttp.ClientResponseError:
+            parser.error('One user is json file may not exists.')
+    return list(data)
 
 
 def recent_enough(timedelta) -> bool:
@@ -146,20 +154,24 @@ async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
 
 
 @aggregate(asyncio.run)
-async def get_repos_to_watch_from(users: list) -> dict:
-    """ Dict of all repositories of each user, thanks to github api. """
+async def get_repos_to_watch_from(users: list) -> set:
+    """ All repositories of each user, thanks to github api. """
+    repos = set()
+
     async def task(user: str):
-        repos = []
         for page in it.count(1):
             url = f'{GITHUB_API}/users/{user}/repos?per_page=100&page={page}'
             new_data = await get_html_json(session, url)
-            repos.extend(repo['name'] for repo in new_data
-                         if repo['open_issues'])  # or open pull requests
+            for repo in new_data:
+                if repo['open_issues']:  # or open pull requests
+                    new = repo['full_name'].split('/')
+                    repos.add(tuple(new))
             if len(new_data) < 100:
-                return user, repos
+                break
 
     async with aiohttp.ClientSession(raise_for_status=True) as session:
-        return dict(await asyncio.gather(*map(task, users)))
+        await asyncio.gather(*map(task, users))
+        return repos
 
 
 @aggregate(asyncio.run)
