@@ -62,9 +62,11 @@ if args.days is not None and args.days <= 0:
 
 def get_repos() -> list:
     """ Define repos to watch according to given arguments user/json. """
+    def fix_name(name: str) -> str: return name.replace(' ', '-')
     if args.user:
+        users = list(map(fix_name, args.user))
         try:
-            data = get_repos_to_watch_from(args.user)
+            data = get_repos_to_watch_from(users)
         except aiohttp.ClientResponseError:
             parser.error(API_RESPONSE_ERROR)
     else:
@@ -83,8 +85,9 @@ def get_repos() -> list:
                     for user, repos in data.items())):
             parser.error("The given file does not have the appropriate "
                          "structure: {user1: [repo1, ...], ...}.")
-        users = list(data)
-        data = {(user, repo) for user, repos in data.items() for repo in repos}
+        users = list(map(fix_name, data))
+        data = {(fix_name(user), fix_name(repo))
+                for user, repos in data.items() for repo in repos}
         try:
             # Thanks to github api.
             # We will only parse wanted repositories with issues/pulls.

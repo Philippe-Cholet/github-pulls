@@ -29,7 +29,6 @@ Give github usernames or a json file {user: [repository, ...]}.
 - `beautifulsoup4` to parse html source code.
 
 ### Upcoming improvements
-- Fix the issue "**Only get the last 25 open issues/pulls of each repository.**"
 - Make the script installable with `py -m pîp install [-e] .` to be able to do `github-pulls ...` in any folder.
 - Eventually add it to PyPi, but it's not my current goal.
 
