@@ -9,29 +9,31 @@ from time import perf_counter
 import itertools as it  # chain, count
 import json  # load
 from getpass import getpass
+from http import HTTPStatus
 from argparse import ArgumentParser
 # Awesome decorator inspired by Veky (from py.checkio.org).
 from functools import partial
 aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 
 
+class WebError(Exception):
+    """ Class for considered web errors. """
+
+
 # ---------------------- Constants & Global variables ---------------------- #
 GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
 OUTPUT = 'github-pulls.html'
-API_RESPONSE_ERROR = '''
-Failed to get user repositories from the github API. Maybe...
-- Just a connection issue.
-- An user does not exists.
-- You have reached the limit of possible requests to the github API:
-    60 unauthenticated requests per hour (associated with the IP address).
-    5000 authenticated requests per hour (associated with the user).
-  This tool does a request for every hundred repositories that users have so
-    JSON file maybe have too much users.
-  Maybe you should authenticate.
-- Wrong authentication.
-- Another reason we don't know yet.
-'''
+API_ERRORS = {
+    401: 'Wrong authentication?',
+    403: '''You probably reached the rate limit of the github API:
+  * 60 requests per hour (IP related) if you're not authenticated.
+  * 5000 requests per hour (account related) if you are.
+This tool does a request for every hundred repositories that users have so:
+  * JSON file maybe have too much users or you use this tool too much.
+  * you can authenticate or wait some time.''',
+    404: 'Maybe one user does not exists.',
+    }
 
 now = datetime.now().replace(microsecond=0)
 nb_web_requests = 0
@@ -70,10 +72,7 @@ def get_repos() -> list:
     def fix_name(name: str) -> str: return name.replace(' ', '-')
     if args.user:
         users = list(map(fix_name, args.user))
-        try:
-            data = get_repos_to_watch_from(users)
-        except aiohttp.ClientResponseError:
-            parser.error(API_RESPONSE_ERROR)
+        data = get_repos_to_watch_from(users)
     else:
         try:
             file = args.json or next(f for f in os.listdir('.')
@@ -93,12 +92,9 @@ def get_repos() -> list:
         users = list(map(fix_name, data))
         data = {(fix_name(user), fix_name(repo))
                 for user, repos in data.items() for repo in repos}
-        try:
-            # Thanks to github api.
-            # We will only parse wanted repositories with issues/pulls.
-            data &= get_repos_to_watch_from(users)
-        except aiohttp.ClientResponseError:
-            parser.error(API_RESPONSE_ERROR)
+        # Thanks to github api.
+        # We will only parse wanted repositories with issues/pulls.
+        data &= get_repos_to_watch_from(users)
     return list(data)
 
 
@@ -184,6 +180,9 @@ async def get_html_json(session: aiohttp.ClientSession, url: str) -> str:
     global nb_web_requests
     nb_web_requests += 1
     async with session.get(url) as response:
+        status = response.status
+        if status != 200:
+            raise WebError(url, status, API_ERRORS.get(status, ''))
         return await response.json()
 
 
@@ -210,8 +209,7 @@ async def get_repos_to_watch_from(users: list) -> set:
             if len(new_data) < 100:
                 break
 
-    async with aiohttp.ClientSession(auth=authentication(),
-                                     raise_for_status=True) as session:
+    async with aiohttp.ClientSession(auth=authentication()) as session:
         await asyncio.gather(*map(task, users))
         return repos
 
@@ -307,11 +305,21 @@ def main():
         only when there is something to show. """
     global timing
     timing = - perf_counter()
-    # Look pulls pages of all repositories: looking for pull requests,
-    # and the number of issues (update `repos_with_issues`).
-    pulls = opened(get_repos(), 'pulls', look_issues=True)
-    # Then look issues pages when there are issues.
-    issues = opened(repos_with_issues, 'issues')
+
+    try:
+        # Look pulls pages of all repositories: looking for pull requests,
+        # and the number of issues (update `repos_with_issues`).
+        pulls = opened(get_repos(), 'pulls', look_issues=True)
+        # Then look issues pages when there are issues.
+        issues = opened(repos_with_issues, 'issues')
+    except WebError as error:
+        url, status, message = error.args
+        error = next((k.replace('_', ' ')
+                      for k, v in HTTPStatus.__members__.items()
+                      if v == status), '')
+        print(f'ERROR {status} {error}: {url}\n{message}')
+        exit(1)
+
     timing += perf_counter()
 
     if pulls or issues:
