@@ -1,2 +1,4 @@
-github-pulls.html
-!example/github-pulls.html
+*.egg-info
+__pycache__
+
+*.html

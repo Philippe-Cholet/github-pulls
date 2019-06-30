@@ -3,10 +3,25 @@ This personal command line tool allow to efficiently go through a lot of github 
 
 You can restrict the search to the lastest days, and sort the results according to opening dates, (owner, repo), or author.
 
+### Requirements
+- `python 3.6+` because I like f-strings.
+- `aiohttp` to load webpages in an asynchronous way for efficiency.
+- `beautifulsoup4` to parse html source code.
+
+### Without installation
+- Download `github_pulls.py`
+- Then use `github_pulls.py ...` in the terminal (and in the folder where the file is).
+
+### Installation
+- Download at least `github_pulls.py`, `setup.py` and `setup.cfg` on your computer.
+- Open a terminal in the folder where the files are.
+- Then just write `py -m pîp install .` (or `py -m pîp install -e .` if you want to edit the script yourself, just like me).
+- Finally use `github-pulls ...` in a terminal and in any folder.
+
 ### Current help message
 ```
-usage: github_pulls.py [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS]
-                       [-s {opening,repo,author}] [--auth]
+usage: github-pulls [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS]
+                    [-s {opening,repo,author}] [--auth]
 
 Parse github repositories for opened pull requests & issues.
 
@@ -25,17 +40,12 @@ Give github usernames or a json file {user: [repository, ...]}. Authenticate
 if you had an error message for (repeated?) big requests.
 ```
 
-### Requirements
-- `python 3.6+` because I like f-strings.
-- `aiohttp` to load webpages in an asynchronous way for efficiency.
-- `beautifulsoup4` to parse html source code.
-
 ### Upcoming improvements
-- Make the script installable with `py -m pîp install [-e] .` to be able to do `github-pulls ...` in any folder.
+- Fix a few things I suppose.
 - Eventually add it to PyPi, but it's not my current goal.
 
 ### Examples
-- **Basic use:** if you want to look issues and pull requests opened in the last 7 days in some user's repositories, just write `github_pulls.py -u username -d 7`.
-- The python/javascript code platform [CheckiO](https://checkio.org) allows users to create their own code mission with a github repository. Then, it's hard to follow all pull requests and issues since they are in more than 300 differents repositories. This command line tool is useful to keep track of potential changes in these repositories. It only needs a json file of the repos to watch, [this one](example/CheckiO.json) for example. **Customizable use with json file:** `github_pulls.py -j example/CheckiO.json -d 31` will look issues and pulls opened in the last month in the repositories given in `example/CheckiO.json` ; or you can do `github_pulls.py -d 31` if you are in `example` folder and `CheckiO.json` is the only json in it.
+- **Basic use:** if you want to look issues and pull requests opened in the last 7 days in some user's repositories, just write `github-pulls -u username -d 7`.
+- The python/javascript code platform [CheckiO](https://checkio.org) allows users to create their own code mission with a github repository. Then, it's hard to follow all pull requests and issues since they are in more than 300 differents repositories. This command line tool is useful to keep track of potential changes in these repositories. It only needs a json file of the repos to watch, [this one](example/CheckiO.json) for example. **Customizable use with json file:** `github-pulls -j example/CheckiO.json -d 31` will look issues and pulls opened in the last month in the repositories given in `example/CheckiO.json` ; or you can do `github-pulls -d 31` if you are in `example` folder and `CheckiO.json` is the only json in it.
 
 ![Rendering example](example/rendering_example.png "Rendering example")
