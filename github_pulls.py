@@ -18,6 +18,18 @@ aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
 GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
 OUTPUT = 'github-pulls.html'
+API_RESPONSE_ERROR = '''
+Failed to get user repositories from the github API. Why?
+- Just a connection issue.
+- An user does not exists.
+- You have reached the limit of possible requests to the github API:
+    60 unauthenticated requests per hour (associated with the IP address).
+    5000 authenticated requests per hour (associated with the user).
+  This tool does a request for every hundred repositories that users have so
+    JSON file maybe have too much users.
+  Maybe you should authenticate (NOT IMPLEMENTED YET).
+- Another reason we don't know yet.
+'''
 
 now = datetime.now().replace(microsecond=0)
 nb_web_requests = 0
@@ -54,8 +66,7 @@ def get_repos() -> list:
         try:
             data = get_repos_to_watch_from(args.user)
         except aiohttp.ClientResponseError:
-            parser.error('Failed to get repositories from users. '
-                         'One user may not exists.')
+            parser.error(API_RESPONSE_ERROR)
     else:
         try:
             file = args.json or next(f for f in os.listdir('.')
@@ -79,7 +90,7 @@ def get_repos() -> list:
             # We will only parse wanted repositories with issues/pulls.
             data &= get_repos_to_watch_from(users)
         except aiohttp.ClientResponseError:
-            parser.error('One user is json file may not exists.')
+            parser.error(API_RESPONSE_ERROR)
     return list(data)
 
 
@@ -126,16 +137,24 @@ def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
     """ Parse github source code to detect pulls/issues
         and generate useful contents, when there are recent enough.
         Add the repo to repos_with_issues when
-        look_issues is True and there are issues. """
+        look_issues is True and there are issues.
+        Finally generate the url to the next page when we must continue. """
     soup = bs4.BeautifulSoup(html_text, 'html.parser')
     if look_issues and github_number_of_issues(soup, user, repo):
         repos_with_issues.append((user, repo))
-    for div in soup.findAll(github_div_search):
+    for div in soup.find_all(github_div_search):
         link, opened_by = div.a, div.find('span', {'class': 'opened-by'})
         opening_time = opened_by.find('relative-time')['datetime']
         since = now - datetime.strptime(opening_time, '%Y-%m-%dT%H:%M:%SZ')
-        if recent_enough(since):
-            yield since, user, repo, link.text, link['href'], opened_by.a.text
+        # Sorted by newest so no need to continue when one is too old.
+        if not recent_enough(since):
+            # We should stop the search. Don't give a link to the next page.
+            yield
+            return
+        yield since, user, repo, link.text, link['href'], opened_by.a.text
+    # The search should stop if there is no link to the next page.
+    link = soup.find('a', {'class': 'next_page', 'rel': 'next'}, text='Next')
+    yield link['href'] if link else None
 
 
 # ---------- Asynchronous way to get github api/pulls/issues pages ---------- #
@@ -180,8 +199,14 @@ async def opened(repos: list, what: str, look_issues: bool = False) -> list:
         Return sorted list of generated contents. """
     async def parser_what_from(github_repo) -> list:
         user, repo = github_repo
-        text = await get_html_text(session, f'{GITHUB}/{user}/{repo}/{what}')
-        return list(github_parser(text, user, repo, look_issues))
+        url = f'{GITHUB}/{user}/{repo}/{what}'
+        res = []
+        while True:
+            text = await get_html_text(session, url)
+            *L, url = github_parser(text, user, repo, look_issues)
+            res.extend(L)
+            if not url:
+                return res
 
     async with aiohttp.ClientSession(raise_for_status=True) as session:
         tasks = map(parser_what_from, repos)
