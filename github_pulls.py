@@ -8,6 +8,7 @@ import os  # listdir, startfile
 from time import perf_counter
 import itertools as it  # chain, count
 import json  # load
+from getpass import getpass
 from argparse import ArgumentParser
 # Awesome decorator inspired by Veky (from py.checkio.org).
 from functools import partial
@@ -19,7 +20,7 @@ GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
 OUTPUT = 'github-pulls.html'
 API_RESPONSE_ERROR = '''
-Failed to get user repositories from the github API. Why?
+Failed to get user repositories from the github API. Maybe...
 - Just a connection issue.
 - An user does not exists.
 - You have reached the limit of possible requests to the github API:
@@ -27,7 +28,8 @@ Failed to get user repositories from the github API. Why?
     5000 authenticated requests per hour (associated with the user).
   This tool does a request for every hundred repositories that users have so
     JSON file maybe have too much users.
-  Maybe you should authenticate (NOT IMPLEMENTED YET).
+  Maybe you should authenticate.
+- Wrong authentication.
 - Another reason we don't know yet.
 '''
 
@@ -38,7 +40,8 @@ repos_with_issues = []
 # ----------------------------- ArgumentParser ----------------------------- #
 parser = ArgumentParser(
     description='Parse github repositories for opened pull requests & issues.',
-    epilog="Give github usernames or a json file {user: [repository, ...]}.")
+    epilog="""Give github usernames or a json file {user: [repository, ...]}.
+Authenticate if you had an error message for (repeated?) big requests.""")
 # Simple use: by github usernames.
 parser.add_argument('-u', '--user', nargs='+',
                     help="Look users' repositories.")
@@ -54,6 +57,8 @@ parser.add_argument('-d', '--days', type=int,
 parser.add_argument('-s', '--sort',
                     choices=['opening', 'repo', 'author'], default='opening',
                     help='sorting output (default: by %(default)s)')
+parser.add_argument('--auth', action='store_true',
+                    help='Authenticate to the github API with prompts.')
 args = parser.parse_args()
 
 if args.days is not None and args.days <= 0:
@@ -110,6 +115,20 @@ def sorting_key(x) -> tuple:
         return x[1].casefold(), x[2].casefold(), x[0]
     if args.sort == 'author':
         return x[-1].casefold(), x[0]
+
+
+def authentication():
+    if args.auth:
+        global timing
+        # Decrease `timing` by the time to authenticate.
+        timing += perf_counter()
+
+        username = input('Your GitHub username: ')
+        prompt = f'Enter host password for user {username!r}:'
+        auth = aiohttp.BasicAuth(login=username, password=getpass(prompt))
+
+        timing -= perf_counter()
+        return auth
 
 
 # ----------------------- Analyze github source code ----------------------- #
@@ -191,7 +210,8 @@ async def get_repos_to_watch_from(users: list) -> set:
             if len(new_data) < 100:
                 break
 
-    async with aiohttp.ClientSession(raise_for_status=True) as session:
+    async with aiohttp.ClientSession(auth=authentication(),
+                                     raise_for_status=True) as session:
         await asyncio.gather(*map(task, users))
         return repos
 
@@ -258,7 +278,7 @@ def html_table(list_opened: list, what: str):
 </table>'''
 
 
-def html_template(timing: float, pulls: list, issues: list) -> str:
+def html_template(pulls: list, issues: list) -> str:
     """ Create full html code source. """
     return f'''<!DOCTYPE html>
 <html>
@@ -285,6 +305,7 @@ def main():
     """ Looking for opened pulls and issues.
         Write and open a great html file with them,
         only when there is something to show. """
+    global timing
     timing = - perf_counter()
     # Look pulls pages of all repositories: looking for pull requests,
     # and the number of issues (update `repos_with_issues`).
@@ -294,7 +315,7 @@ def main():
     timing += perf_counter()
 
     if pulls or issues:
-        text = html_template(timing, pulls, issues)
+        text = html_template(pulls, issues)
         with open(OUTPUT, 'w', encoding='utf-8') as file:
             file.write(text)
         os.startfile(OUTPUT)

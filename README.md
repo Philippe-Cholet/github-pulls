@@ -6,7 +6,7 @@ You can restrict the search to the lastest days, and sort the results according 
 ### Current help message
 ```
 usage: github_pulls.py [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS]
-                       [-s {opening,repo,author}]
+                       [-s {opening,repo,author}] [--auth]
 
 Parse github repositories for opened pull requests & issues.
 
@@ -19,8 +19,10 @@ optional arguments:
   -d DAYS, --days DAYS  only ones opened in the last ... days (default: all).
   -s {opening,repo,author}, --sort {opening,repo,author}
                         sorting output (default: by opening)
+  --auth                Authenticate to the github API with prompts.
 
-Give github usernames or a json file {user: [repository, ...]}.
+Give github usernames or a json file {user: [repository, ...]}. Authenticate
+if you had an error message for (repeated?) big requests.
 ```
 
 ### Requirements
