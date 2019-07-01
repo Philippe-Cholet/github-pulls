@@ -4,9 +4,15 @@ This personal command line tool allow to efficiently go through a lot of github 
 You can restrict the search to the lastest days, and sort the results according to opening dates, (owner, repo), or author.
 
 ### Requirements
-- `python 3.6+` because I like f-strings.
+- `python 3.7+` because of `asyncio.run` has been added to version 3.7.
 - `aiohttp` to load webpages in an asynchronous way for efficiency.
 - `beautifulsoup4` to parse html source code.
+
+This has been tested with:
+- `python==3.7.3`
+- `setuptools==41.0.1`
+- `aiohttp==3.5.4`
+- `beautifulsoup4==4.7.1`
 
 ### Without installation
 - Download `github_pulls.py`

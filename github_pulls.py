@@ -172,7 +172,7 @@ def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
         yield since, user, repo, link.text, link['href'], opened_by.a.text
     # The search should stop if there is no link to the next page.
     link = soup.find('a', {'class': 'next_page', 'rel': 'next'}, text='Next')
-    yield link['href'] if link else None
+    yield GITHUB + link['href'] if link else None
 
 
 # ---------- Asynchronous way to get github api/pulls/issues pages ---------- #
