@@ -110,7 +110,7 @@ def sorting_key(x) -> tuple:
     if args.sort == 'repo':
         return x[1].casefold(), x[2].casefold(), x[0]
     if args.sort == 'author':
-        return x[-1].casefold(), x[0]
+        return x[5].casefold(), x[0]
 
 
 def authentication():
@@ -146,7 +146,7 @@ def github_number_of_issues(soup: bs4.BeautifulSoup,
     link = soup.find('a', {'href': f'/{user}/{repo}/issues'})
     try:
         span = link.find('span', {'class': 'Counter'})
-        return int(span.text)
+        return int(span.text.replace(',', ''))  # '1,061' -> 1061
     except AttributeError:  # link or span can be None.
         return 0
 
@@ -169,7 +169,11 @@ def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
             # We should stop the search. Don't give a link to the next page.
             yield
             return
-        yield since, user, repo, link.text, link['href'], opened_by.a.text
+        labels = div.find_all('a', {'class': 'IssueLabel'})
+        milestones = div.find_all('a', {'class': 'milestone-link'})
+        yield (since, user, repo, link.text, link['href'], opened_by.a.text,
+               [(tag.text, tag['href']) for tag in labels],
+               [(tag.text, tag['href']) for tag in milestones])
     # The search should stop if there is no link to the next page.
     link = soup.find('a', {'class': 'next_page', 'rel': 'next'}, text='Next')
     yield GITHUB + link['href'] if link else None
@@ -253,6 +257,10 @@ a { text-decoration: none; color: inherit; }
 def html_table(list_opened: list, what: str):
     """ Previously generated content presented in an html table. """
     if list_opened:  # Otherwise, it would be an empty table, so yield nothing.
+        any_label, any_milestone = (any(x[i] for x in list_opened)
+                                    for i in (-2, -1))
+        th_labels = '<th>Labels</th>' if any_label else ''
+        th_milestones = '<th>Milestones</th>' if any_milestone else ''
         yield f'''
 <table>
     <caption>Opened {what.lower()}s</caption>
@@ -260,15 +268,25 @@ def html_table(list_opened: list, what: str):
         <th>Username</th>
         <th>Repository</th>
         <th>{what.capitalize()}</th>
+        {th_labels}
+        {th_milestones}
         <th>Opened by</th>
         <th>Since</th>
     </thead>'''
-        for since, user, repo, title, link, opened_by in list_opened:
+        for (since, user, repo, title, link, opened_by,
+             labels, milestones) in list_opened:
+            labels, milestones = ('<br>'.join(f'<a href="{GITHUB}{a}">{t}</a>'
+                                              for t, a in L)
+                                  for L in (labels, milestones))
+            td_labels = f'<td>{labels}</td>' if any_label else ''
+            td_milestones = f'<td>{milestones}</td>' if any_milestone else ''
             yield f'''
     <tr>
         <td><a href="{GITHUB}/{user}">{user}</a></td>
         <td><a href="{GITHUB}/{user}/{repo}">{repo}</a></td>
         <td><a href="{GITHUB}{link}">{title}</a></td>
+        {td_labels}
+        {td_milestones}
         <td><a href="{GITHUB}/{opened_by}">{opened_by}</a></td>
         <td>{since}</td>
     </tr>'''

@@ -4,7 +4,7 @@ This personal command line tool allow to efficiently go through a lot of github 
 You can restrict the search to the lastest days, and sort the results according to opening dates, (owner, repo), or author.
 
 ### Requirements
-- `python 3.7+` because of `asyncio.run` has been added to version 3.7.
+- `python 3.7+` because `asyncio.run` has been added to version 3.7.
 - `aiohttp` to load webpages in an asynchronous way for efficiency.
 - `beautifulsoup4` to parse html source code.
 
