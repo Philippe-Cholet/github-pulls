@@ -4,7 +4,7 @@ import bs4  # BeautifulSoup
 # Stdlib
 import asyncio  # run, gather
 from datetime import datetime
-import os  # listdir, startfile
+import os, sys, subprocess # listdir, startfile
 from time import perf_counter
 import itertools as it  # chain, count
 import json  # load
@@ -316,6 +316,14 @@ def html_template(pulls: list, issues: list) -> str:
 '''
 
 
+def open_file(filename):
+    if sys.platform == "win32":
+        os.startfile(filename)
+    else:
+        opener ="open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.call([opener, filename])
+
+
 # -------------------------------- Main part -------------------------------- #
 def main():
     """ Looking for opened pulls and issues.
@@ -344,7 +352,7 @@ def main():
         text = html_template(pulls, issues)
         with open(OUTPUT, 'w', encoding='utf-8') as file:
             file.write(text)
-        os.startfile(OUTPUT)
+        open_file(OUTPUT)
 
 
 if __name__ == '__main__':
