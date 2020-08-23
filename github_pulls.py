@@ -1,29 +1,21 @@
-# Not stdlib
-import aiohttp  # ClientSession
-import bs4  # BeautifulSoup
-# Stdlib
-import asyncio  # run, gather
-from datetime import datetime
-import os, sys, subprocess # listdir, startfile
-from time import perf_counter
-import itertools as it  # chain, count
-import json  # load
-from getpass import getpass
+import asyncio
+import datetime
+import itertools as it
+import json
 from http import HTTPStatus
-from argparse import ArgumentParser
-# Awesome decorator inspired by Veky (from py.checkio.org).
-from functools import partial
-aggregate = partial(partial, lambda f, g: lambda *a, **kw: f(g(*a, **kw)))
+from time import perf_counter
+from traceback import format_exc
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
+import aiohttp
+import bs4
+import click
+# import lxml
 
-class WebError(Exception):
-    """ Class for considered web errors. """
-
-
-# ---------------------- Constants & Global variables ---------------------- #
+__VERSION__ = '2.0.0'
 GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
-OUTPUT = 'github-pulls.html'
+USER_AGENT = f'github-pulls {__VERSION__}'
 API_ERRORS = {
     401: 'Wrong authentication?',
     403: '''You probably reached the rate limit of the github API:
@@ -33,210 +25,60 @@ This tool does a request for every hundred repositories that users have so:
   * JSON file maybe have too much users or you use this tool too much.
   * you can authenticate or wait some time.''',
     404: 'Maybe one user does not exists.',
-    }
+}
 
-now = datetime.now().replace(microsecond=0)
-nb_web_requests = 0
-repos_with_issues = []
+JSONConfig = Dict[str, List[str]]
+Repo = Tuple[str, str]
 
-# ----------------------------- ArgumentParser ----------------------------- #
-parser = ArgumentParser(
-    description='Parse github repositories for opened pull requests & issues.',
-    epilog="""Give github usernames or a json file {user: [repository, ...]}.
-Authenticate if you had an error message for (repeated?) big requests.""")
-# Simple use: by github usernames.
-parser.add_argument('-u', '--user', nargs='+',
-                    help="Look users' repositories.")
-# Customizable use with a json file.
-parser.add_argument('-j', '--json',
-                    help='JSON file with repositories '
-                    '(default: first json file found in current folder).')
-# Simple filter of results: useful to get only latest results, if there has.
-parser.add_argument('-d', '--days', type=int,
-                    help='only ones opened in the last ... days'
-                    ' (default: all).')
-# Sort the results for a better visualization.
-parser.add_argument('-s', '--sort',
-                    choices=['opening', 'repo', 'author'], default='opening',
-                    help='sorting output (default: by %(default)s)')
-parser.add_argument('--auth', action='store_true',
-                    help='Authenticate to the github API with prompts.')
-args = parser.parse_args()
-
-if args.days is not None and args.days <= 0:
-    parser.error('days argument must be positive.')
+nb_requests = 0  # global variable
+now = datetime.datetime.now().replace(microsecond=0)
 
 
-def get_repos() -> list:
-    """ Define repos to watch according to given arguments user/json. """
-    def fix_name(name: str) -> str: return name.replace(' ', '-')
-    if args.user:
-        users = list(map(fix_name, args.user))
-        data = get_repos_to_watch_from(users)
-    else:
-        try:
-            file = args.json or next(f for f in os.listdir('.')
-                                     if f.endswith('.json'))
-            with open(file) as f:
-                data = json.load(f)
-        except (StopIteration, FileNotFoundError):
-            parser.error('No json file found.')
-        except json.JSONDecodeError:
-            parser.error('Failed to decode the json file.')
-        if not (isinstance(data, dict) and
-                all(isinstance(user, str) and isinstance(repos, list) and
-                    all(isinstance(repo, str) for repo in repos)
-                    for user, repos in data.items())):
-            parser.error("The given file does not have the appropriate "
-                         "structure: {user1: [repo1, ...], ...}.")
-        users = list(map(fix_name, data))
-        data = {(fix_name(user), fix_name(repo))
-                for user, repos in data.items() for repo in repos}
-        # Thanks to github api.
-        # We will only parse wanted repositories with issues/pulls.
-        data &= get_repos_to_watch_from(users)
-    return list(data)
+def recent_enough(since: datetime.timedelta, days: Optional[int]) -> bool:
+    """Say if it is less than the given days."""
+    return days is None or since.total_seconds() < 60 * 60 * 24 * days
 
 
-def recent_enough(timedelta) -> bool:
-    return args.days is None or timedelta.total_seconds() < 60*60*24*args.days
+class GithubData(NamedTuple):
+    """Data about a pull request or an issue extracted from a github page."""
 
+    user: str
+    repo: str
+    title: str
+    link: str
+    author: str
+    since: datetime.timedelta
+    # Labels and milestones: ((text, link), ...)
+    labels: Tuple[Tuple[str, str], ...]
+    milestones: Tuple[Tuple[str, str], ...]
 
-def sorting_key(x) -> tuple:
-    """ Sort pulls and issues according to sort argument. """
-    # x = (since, user, repo, title, link, opened_by)
-    if args.sort == 'opening':
-        return x
-    if args.sort == 'repo':
-        return x[1].casefold(), x[2].casefold(), x[0]
-    if args.sort == 'author':
-        return x[5].casefold(), x[0]
+    def opening_key(self):
+        return self.since
 
+    def repo_key(self):
+        return self.user, self.repo, self.since
 
-def authentication():
-    if args.auth:
-        global timing
-        # Decrease `timing` by the time to authenticate.
-        timing += perf_counter()
+    def author_key(self):
+        return self.author, self.since
 
-        username = input('Your GitHub username: ')
-        prompt = f'Enter host password for user {username!r}:'
-        auth = aiohttp.BasicAuth(login=username, password=getpass(prompt))
-
-        timing -= perf_counter()
-        return auth
-
-
-# ----------------------- Analyze github source code ----------------------- #
-def github_div_search(tag: bs4.Tag) -> bool:
-    """ Is it a div tag for a pull request or an issue ? """
-    return (tag.name == 'div' and tag.has_attr('class') and
-            {'float-left', 'lh-condensed', 'p-2'} <= set(tag.attrs['class']))
-
-
-def github_number_of_issues(soup: bs4.BeautifulSoup,
-                            user: str, repo: str) -> int:
-    """ Find the number of issues in soup of '/user/repo/pulls'. """
-    # <a ... href="/USER/REPOSITORY_NAME/issues" ...>
-    #     <svg class="octicon octicon-issue-opened" ...>...</svg>
-    #     <span itemprop="name">Issues</span>
-    #     <span class="Counter">NUMBER WE WANT</span>
-    #     <meta itemprop="position" content="2">
-    # </a>
-    link = soup.find('a', {'href': f'/{user}/{repo}/issues'})
-    try:
-        span = link.find('span', {'class': 'Counter'})
-        return int(span.text.replace(',', ''))  # '1,061' -> 1061
-    except AttributeError:  # link or span can be None.
-        return 0
-
-
-def github_parser(html_text: str, user: str, repo: str, look_issues: bool):
-    """ Parse github source code to detect pulls/issues
-        and generate useful contents, when there are recent enough.
-        Add the repo to repos_with_issues when
-        look_issues is True and there are issues.
-        Finally generate the url to the next page when we must continue. """
-    soup = bs4.BeautifulSoup(html_text, 'html.parser')
-    if look_issues and github_number_of_issues(soup, user, repo):
-        repos_with_issues.append((user, repo))
-    for div in soup.find_all(github_div_search):
-        link, opened_by = div.a, div.find('span', {'class': 'opened-by'})
-        opening_time = opened_by.find('relative-time')['datetime']
-        since = now - datetime.strptime(opening_time, '%Y-%m-%dT%H:%M:%SZ')
-        # Sorted by newest so no need to continue when one is too old.
-        if not recent_enough(since):
-            # We should stop the search. Don't give a link to the next page.
-            yield
-            return
-        labels = div.find_all('a', {'class': 'IssueLabel'})
-        milestones = div.find_all('a', {'class': 'milestone-link'})
-        yield (since, user, repo, link.text, link['href'], opened_by.a.text,
-               [(tag.text, tag['href']) for tag in labels],
-               [(tag.text, tag['href']) for tag in milestones])
-    # The search should stop if there is no link to the next page.
-    link = soup.find('a', {'class': 'next_page', 'rel': 'next'}, text='Next')
-    yield GITHUB + link['href'] if link else None
-
-
-# ---------- Asynchronous way to get github api/pulls/issues pages ---------- #
-async def get_html_json(session: aiohttp.ClientSession, url: str) -> str:
-    global nb_web_requests
-    nb_web_requests += 1
-    async with session.get(url) as response:
-        status = response.status
-        if status != 200:
-            raise WebError(url, status, API_ERRORS.get(status, ''))
-        return await response.json()
-
-
-async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
-    global nb_web_requests
-    nb_web_requests += 1
-    async with session.get(url) as response:
-        return await response.text()
-
-
-@aggregate(asyncio.run)
-async def get_repos_to_watch_from(users: list) -> set:
-    """ All repositories of each user, thanks to github api. """
-    repos = set()
-
-    async def task(user: str):
-        for page in it.count(1):
-            url = f'{GITHUB_API}/users/{user}/repos?per_page=100&page={page}'
-            new_data = await get_html_json(session, url)
-            for repo in new_data:
-                if repo['open_issues']:  # or open pull requests
-                    new = repo['full_name'].split('/')
-                    repos.add(tuple(new))
-            if len(new_data) < 100:
-                break
-
-    async with aiohttp.ClientSession(auth=authentication()) as session:
-        await asyncio.gather(*map(task, users))
-        return repos
-
-
-@aggregate(asyncio.run)
-async def opened(repos: list, what: str, look_issues: bool = False) -> list:
-    """ Look "what" in the given repositories, in an efficient way.
-        Return sorted list of generated contents. """
-    async def parser_what_from(github_repo) -> list:
-        user, repo = github_repo
-        url = f'{GITHUB}/{user}/{repo}/{what}'
-        res = []
-        while True:
-            text = await get_html_text(session, url)
-            *L, url = github_parser(text, user, repo, look_issues)
-            res.extend(L)
-            if not url:
-                return res
-
-    async with aiohttp.ClientSession(raise_for_status=True) as session:
-        tasks = map(parser_what_from, repos)
-        results = await asyncio.gather(*tasks)
-        return sorted(it.chain.from_iterable(results), key=sorting_key)
+    def tr_line(self, show_labels: bool, show_milestones: bool) -> str:
+        """Display the data in a line of a html table."""
+        labels, milestones = (
+            '<br>'.join(f'<a href="{GITHUB}{a}">{t}</a>' for t, a in L)
+            for L in (self.labels, self.milestones)
+        )
+        td_labels = f'<td>{labels}</td>' if show_labels else ''
+        td_milestones = f'<td>{milestones}</td>' if show_milestones else ''
+        return f'''
+    <tr>
+        <td><a href="{GITHUB}/{self.user}">{self.user}</a></td>
+        <td><a href="{GITHUB}/{self.user}/{self.repo}">{self.repo}</a></td>
+        <td><a href="{GITHUB}{self.link}">{self.title}</a></td>
+        {td_labels}
+        {td_milestones}
+        <td><a href="{GITHUB}/{self.author}">{self.author}</a></td>
+        <td>{self.since}</td>
+    </tr>'''
 
 
 # ----------------------------- HTML/CSS output ----------------------------- #
@@ -253,15 +95,20 @@ a { text-decoration: none; color: inherit; }
 '''
 
 
-@aggregate(''.join)
-def html_table(list_opened: list, what: str):
-    """ Previously generated content presented in an html table. """
-    if list_opened:  # Otherwise, it would be an empty table, so yield nothing.
-        any_label, any_milestone = (any(x[i] for x in list_opened)
-                                    for i in (-2, -1))
-        th_labels = '<th>Labels</th>' if any_label else ''
-        th_milestones = '<th>Milestones</th>' if any_milestone else ''
-        yield f'''
+def html_table(datas: List[GithubData], what: str) -> str:
+    """Display datas in a html table."""
+    if not datas:
+        return ''
+    assert what in ('pull request', 'issue')
+    any_label = any(data.labels for data in datas)
+    any_milestone = any(data.milestones for data in datas)
+    th_labels = '<th>Labels</th>' if any_label else ''
+    th_milestones = '<th>Milestones</th>' if any_milestone else ''
+    tr_lines = ''.join(
+        data.tr_line(any_label, any_milestone)
+        for data in datas
+    )
+    return f'''
 <table>
     <caption>Opened {what.lower()}s</caption>
     <thead>
@@ -272,30 +119,17 @@ def html_table(list_opened: list, what: str):
         {th_milestones}
         <th>Opened by</th>
         <th>Since</th>
-    </thead>'''
-        for (since, user, repo, title, link, opened_by,
-             labels, milestones) in list_opened:
-            labels, milestones = ('<br>'.join(f'<a href="{GITHUB}{a}">{t}</a>'
-                                              for t, a in L)
-                                  for L in (labels, milestones))
-            td_labels = f'<td>{labels}</td>' if any_label else ''
-            td_milestones = f'<td>{milestones}</td>' if any_milestone else ''
-            yield f'''
-    <tr>
-        <td><a href="{GITHUB}/{user}">{user}</a></td>
-        <td><a href="{GITHUB}/{user}/{repo}">{repo}</a></td>
-        <td><a href="{GITHUB}{link}">{title}</a></td>
-        {td_labels}
-        {td_milestones}
-        <td><a href="{GITHUB}/{opened_by}">{opened_by}</a></td>
-        <td>{since}</td>
-    </tr>'''
-        yield '''
+    </thead>
+    {tr_lines}
 </table>'''
 
 
-def html_template(pulls: list, issues: list) -> str:
-    """ Create full html code source. """
+def html_template(
+    pulls: List[GithubData],
+    issues: List[GithubData],
+    seconds: float,
+) -> str:
+    """Create full html source code for found pulls/issues."""
     return f'''<!DOCTYPE html>
 <html>
     <head>
@@ -304,7 +138,7 @@ def html_template(pulls: list, issues: list) -> str:
     </head>
     <body>
         <p>
-            Took {timing:.1f} seconds to do {nb_web_requests} web requests,
+            Took {seconds:.1f} seconds to do {nb_requests} web requests,
             obtain {len(pulls)} opened pull request(s)
             and {len(issues)} opened issue(s).
         </p>
@@ -316,44 +150,314 @@ def html_template(pulls: list, issues: list) -> str:
 '''
 
 
-def open_file(filename):
-    if sys.platform == "win32":
-        os.startfile(filename)
-    else:
-        opener ="open" if sys.platform == "darwin" else "xdg-open"
-        subprocess.call([opener, filename])
+# ----------------------- Analyze github source code ----------------------- #
+def github_div_search(tag: bs4.Tag) -> bool:
+    """Say if it is a div tag for a pull request or an issue."""
+    # <div id="issue_1234" ...>
+    return (
+        tag.name == 'div'
+        and tag.has_attr('id')
+        and tag.attrs['id'].startswith('issue_')
+        and tag.attrs['id'][6:].isdigit()
+    )
 
 
-# -------------------------------- Main part -------------------------------- #
-def main():
-    """ Looking for opened pulls and issues.
-        Write and open a great html file with them,
-        only when there is something to show. """
-    global timing
-    timing = - perf_counter()
-
+def github_number_of_issues(
+    soup: bs4.BeautifulSoup,
+    user: str,
+    repo: str,
+) -> int:
+    """ Find the number of issues in soup of '/user/repo/pulls'. """
+    # <a ... href="/USER/REPO/issues" ...>
+    #     <svg ...>...</svg>
+    #     <span itemprop="name">Issues</span>
+    #     <span title="1,313" class="Counter">1.3k</span>
+    #     <meta itemprop="position" content="2">
+    # </a>
+    link = soup.find('a', {'href': f'/{user}/{repo}/issues'})
+    if link is None:
+        return 0
     try:
-        # Look pulls pages of all repositories: looking for pull requests,
-        # and the number of issues (update `repos_with_issues`).
-        pulls = opened(get_repos(), 'pulls', look_issues=True)
-        # Then look issues pages when there are issues.
-        issues = opened(repos_with_issues, 'issues')
-    except WebError as error:
-        url, status, message = error.args
-        error = next((k.replace('_', ' ')
-                      for k, v in HTTPStatus.__members__.items()
-                      if v == status), '')
-        print(f'ERROR {status} {error}: {url}\n{message}')
-        exit(1)
+        span = link.find('span', {'class': 'Counter'})
+        return int(span['title'].replace(',', ''))
+    except Exception:  # span can be None, do not have 'title', or not an int.
+        click.secho('Unexpected error:', err=True, fg='red', bold=True)
+        click.echo(format_exc(), err=True)
+        return 0
 
-    timing += perf_counter()
 
-    if pulls or issues:
-        text = html_template(pulls, issues)
-        with open(OUTPUT, 'w', encoding='utf-8') as file:
-            file.write(text)
-        open_file(OUTPUT)
+def github_parser(
+    html_text: str,
+    user: str,
+    repo: str,
+    days: Optional[int],
+) -> Tuple[List[GithubData], str, bool]:
+    """
+    Parse github source code to detect datas, next url and if there are issues.
+    """
+    soup = bs4.BeautifulSoup(html_text, 'lxml')
+
+    datas = []
+    next_url = ''
+    has_issues = bool(github_number_of_issues(soup, user, repo))
+
+    for div in soup.find_all(github_div_search):
+        opened_by = div.find('span', {'class': 'opened-by'})
+        when = opened_by.find('relative-time')['datetime']
+        since = now - datetime.datetime.strptime(when, '%Y-%m-%dT%H:%M:%SZ')
+        if not recent_enough(since, days):
+            # Sorted by newest so no need to continue when one is too old.
+            # Stop the search and don't give the link to the next page.
+            break
+        link = div.a
+        labels = div.find_all('a', {'class': 'IssueLabel'})
+        milestones = div.find_all('a', {'class': 'milestone-link'})
+        data = GithubData(
+            user,
+            repo,
+            link.text,
+            link['href'],
+            opened_by.a.text,
+            since,
+            tuple((tag.text, tag['href']) for tag in labels),
+            tuple((tag.text, tag['href']) for tag in milestones),
+        )
+        datas.append(data)
+    else:
+        # The search will stop if there is no link to the next page.
+        next_attrs = {'class': 'next_page', 'rel': 'next'}
+        link = soup.find('a', next_attrs, text='Next')
+        if link:
+            next_url = GITHUB + link['href']
+    return datas, next_url, has_issues
+
+
+# ---------- Asynchronous way to get github api/pulls/issues pages ---------- #
+async def get_html_text(session: aiohttp.ClientSession, url: str) -> str:
+    """Get html text from the url."""
+    global nb_requests
+    nb_requests += 1
+    async with session.get(url) as response:
+        return await response.text()
+
+
+async def get_html_json(session: aiohttp.ClientSession, url: str) -> Any:
+    """Get json from the url."""
+    global nb_requests
+    nb_requests += 1
+    async with session.get(url, raise_for_status=True) as response:
+        return await response.json()
+
+
+async def get_repos_to_watch_from(
+    users: List[str],
+    token: Optional[str],
+) -> Set[Repo]:
+    """Get all repositories of all users, thanks to the Github API."""
+    repos: Set[Repo] = set()
+
+    async def task(user: str) -> None:
+        for page in it.count(1):
+            url = f'{GITHUB_API}/users/{user}/repos?per_page=100&page={page}'
+            data = await get_html_json(session, url)
+            for repo in data:
+                if repo['open_issues']:  # or open pull requests
+                    new = repo['full_name'].split('/')
+                    assert len(new) == 2
+                    repos.add(tuple(new))  # type: ignore
+            if len(data) < 100:
+                break
+
+    headers = {'User-Agent': USER_AGENT}
+    if token is not None:
+        headers['Authorization'] = f'token {token}'
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        await asyncio.gather(*map(task, users))
+        return repos
+
+
+async def get_repos(
+    users: List[str],
+    config: Optional[JSONConfig],
+    token: Optional[str],
+) -> List[Repo]:
+    """List repos to watch according to given users/config."""
+    if users:
+        repos = await get_repos_to_watch_from(users, token)
+    elif config is not None:
+        users = list(config)
+        repos = {
+            (user, repo)
+            for user, repos in config.items()
+            for repo in repos
+        }
+        # Will only parse wanted repos with issues/pulls, thanks to github api.
+        repos &= await get_repos_to_watch_from(users, token)
+    else:
+        raise click.Abort('Nothing to do without users or json file.')
+    return list(repos)
+
+
+async def opened(
+    repos: List[Repo],
+    days: Optional[int],
+) -> Tuple[List[GithubData], List[GithubData]]:
+    """List recent pull requests and issues in the given repositories."""
+    repos_with_issues: List[Repo] = []
+
+    async def task(github_repo: Repo, what: str) -> List[GithubData]:
+        user, repo = github_repo
+        url = f'{GITHUB}/{user}/{repo}/{what}'
+        datas: List[GithubData] = []
+        while True:
+            text = await get_html_text(session, url)
+            new_datas, url, has_issues = github_parser(text, user, repo, days)
+            if has_issues and what == 'pulls':
+                repos_with_issues.append(github_repo)
+            datas.extend(new_datas)
+            if not url:
+                break
+        return datas
+
+    async with aiohttp.ClientSession(raise_for_status=True) as session:
+        tasks = (task(repo, 'pulls') for repo in repos)
+        results = await asyncio.gather(*tasks)
+        pulls = list(it.chain.from_iterable(results))
+
+        tasks = (task(repo, 'issues') for repo in repos_with_issues)
+        results = await asyncio.gather(*tasks)
+        issues = list(it.chain.from_iterable(results))
+
+    return pulls, issues
+
+
+def error_type(status: int) -> str:
+    """
+    >>> error_type(404)
+    'NOT FOUND'
+    """
+    for message, code in HTTPStatus.__members__.items():
+        if code == status:
+            return message.replace('_', ' ')
+    return ''
+
+
+async def main(
+    users: List[str],
+    config: Optional[JSONConfig],
+    token: Optional[str],
+    days: Optional[int],
+) -> Tuple[List[GithubData], List[GithubData]]:
+    """Search repositories and list recent pull requests and issues in them."""
+    try:
+        repos = await get_repos(users, config, token)
+        pulls, issues = await opened(repos, days)
+        return pulls, issues
+    except aiohttp.ClientResponseError as error:
+        url = error.request_info.url.human_repr()
+        code = error.status
+        message = f'ERROR {code} {error_type(code)}: {url}\n{error.message}'
+        click.echo(message, err=True)
+        if code in GITHUB_API:
+            click.echo(GITHUB_API[code], err=True)
+        raise click.Abort()
+
+
+# ------------------------------ Command line ------------------------------- #
+def load_config(ctx, param, config: Optional[str]) -> Optional[JSONConfig]:
+    """Extract and valid config from a JSON file."""
+    if config is None:
+        return config
+    with open(config) as fp:
+        data = json.load(fp)
+    if not (
+        isinstance(data, dict)
+        and all(
+            isinstance(user, str)
+            and isinstance(repos, list)
+            and all(isinstance(repo, str) for repo in repos)
+            for user, repos in data.items()
+        )
+    ):
+        raise click.BadParameter(
+            'The given json file does not have the expected structure: '
+            '{user1: [repo1, ...], ...}.'
+        )
+    return data
+
+
+@click.command(
+    context_settings={'help_option_names': ['-h', '--help']},
+    epilog='''Give github usernames or a json file {user: repositories}.
+    Authenticate if you had an error message for (repeated?) big requests
+    (auth needs a token created at "https://github.com/settings/tokens").''',
+)
+@click.option(
+    '--user',
+    '-u',
+    'users',
+    multiple=True,
+    help='Look all repositories of given users.',
+)
+@click.option(
+    '--json',
+    '-j',
+    'config',
+    type=click.Path(exists=True, dir_okay=False),
+    callback=load_config,
+    help='JSON file with specific repositories.',
+)
+@click.option(
+    '--token',
+    '-t',
+    help='Token to authenticate to the Github API.',
+)
+@click.option(
+    '--days',
+    '-d',
+    type=click.IntRange(min=1),
+    help='Only keep the ones opened in the last given days.  [default: all]',
+)
+@click.option(
+    '--sort',
+    '-s',
+    type=click.Choice(('opening', 'repo', 'author')),
+    default='opening',
+    show_default=True,
+    help='Sort the pull requests and the issues for a better visualization.',
+)
+@click.option(
+    '--html',
+    '-o',
+    type=click.Path(writable=True, dir_okay=False),
+    default='github-pulls.html',
+    show_default=True,
+    help='Path to the html result page.',
+)
+def cli(users, config, token, days, sort, html):
+    """Parse github repositories for opened pull requests & issues."""
+    if not users and not config:
+        click.echo('No users and no config.', err=True)
+        return
+
+    start_time = perf_counter()
+    pulls, issues = asyncio.run(main(users, config, token, days))
+    elapsed_time = perf_counter() - start_time
+
+    if not pulls and not issues:
+        click.echo('No pull requests and no issues.', err=True)
+        return
+
+    key: Callable[['GithubData'], Any] = getattr(GithubData, f'{sort}_key')
+    pulls.sort(key=key)
+    issues.sort(key=key)
+
+    text = html_template(pulls, issues, elapsed_time)
+    with open(html, 'w', encoding='utf-8') as file:
+        file.write(text)
+    click.launch(html)
 
 
 if __name__ == '__main__':
-    main()
+    cli()
