@@ -1,57 +1,75 @@
 # GitHub Pulls
-This personal command line tool allow to efficiently go through a lot of github repositories (from given users or given repos in a json file) to find pull requests and issues, and render results in a single webpage with links to them.
+This command line tool allow to efficiently go through a lot of github _public_ repositories (from given users and given repos in a json file) to find pull requests and issues, and render results in a single webpage with links to them.
 
 You can restrict the search to the lastest days, and sort the results according to opening dates, (owner, repo), or author.
 
 ### Requirements
 - `python 3.7+` because `asyncio.run` has been added to version 3.7.
 - `aiohttp` to load webpages in an asynchronous way for efficiency.
-- `beautifulsoup4` to parse html source code.
+- `beautifulsoup4` and `lxml` to [efficiently](https://www.crummy.com/software/BeautifulSoup/bs4/doc/#installing-a-parser) parse html source code.
+- `click` for a better command line interface.
 
-This has been tested with:
-- `python==3.7.3`
-- `setuptools==41.0.1`
-- `aiohttp==3.5.4`
-- `beautifulsoup4==4.7.1`
+This has been tested with `python 3.7.4` and:
+```
+setuptools==49.3.1
+aiohttp==3.6.2
+beautifulsoup4==4.9.1
+click==7.1.2
+lxml==4.5.2
+```
 
 ### Without installation
-- Download `github_pulls.py`
-- Then use `github_pulls.py ...` in the terminal (and in the folder where the file is).
+If `aiohttp`, `bs4`, `click` and `lxml` are already installed, download `github_pulls.py`, then use `github_pulls.py ...` in the terminal (and in the folder where the file is).
 
 ### Installation
-- Download at least `github_pulls.py`, `setup.py` and `setup.cfg` on your computer.
-- Open a terminal in the folder where the files are.
-- Then just write `py -m pîp install .` (or `py -m pîp install -e .` if you want to edit the script yourself, just like me).
-- Finally use `github-pulls ...` in a terminal and in any folder.
+<!-- https://pip.pypa.io/en/stable/reference/pip_install/#examples -->
+Once installed, you can write `github-pulls ...` in a terminal and in any folder.
+
+#### With pip
+It is not available on PyPi at the moment so `py -m pip install github-pulls` will not work. But the github url is enough:
+
+`py -m pip install git+https://github.com/Philippe-Cholet/github-pulls@master`
+
+#### With [pipx](https://pipxproject.github.io/pipx/ "my favorite way"), which installs it in an isolated environment
+`pipx install git+https://github.com/Philippe-Cholet/github-pulls@master`
+
+Or if you just want to test it for yourself without installing it:
+
+`pipx run --spec git+https://github.com/Philippe-Cholet/github-pulls@master github-pulls [YOUR_OPTIONS]`
 
 ### Current help message
 ```
-usage: github-pulls [-h] [-u USER [USER ...]] [-j JSON] [-d DAYS]
-                    [-s {opening,repo,author}] [--auth]
+Usage: github-pulls [OPTIONS]
 
-Parse github repositories for opened pull requests & issues.
+  Parse github repositories for opened pull requests & issues.
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -u USER [USER ...], --user USER [USER ...]
-                        Look users' repositories.
-  -j JSON, --json JSON  JSON file with repositories (default: first json file
-                        found in current folder).
-  -d DAYS, --days DAYS  only ones opened in the last ... days (default: all).
-  -s {opening,repo,author}, --sort {opening,repo,author}
-                        sorting output (default: by opening)
-  --auth                Authenticate to the github API with prompts.
+Options:
+  -u, --user TEXT                 Look all repositories of given users.
+  -j, --json FILE                 JSON file with specific repositories.
+  -t, --token TEXT                Token to authenticate to the Github API.
+  -d, --days INTEGER RANGE        Only keep the ones opened in the last given
+                                  days.  [default: all]
 
-Give github usernames or a json file {user: [repository, ...]}. Authenticate
-if you had an error message for (repeated?) big requests.
+  -s, --sort [opening|repo|author]
+                                  Sort the pull requests and the issues for a
+                                  better visualization.  [default: opening]
+
+  -o, --html FILE                 Path to the html result page.  [default:
+                                  github-pulls.html]
+
+  -h, --help                      Show this message and exit.
+
+  Give github usernames or a json file {user: repositories}. Authenticate if
+  you had an error message for (repeated?) big requests (auth needs a token
+  created at "https://github.com/settings/tokens").
 ```
 
-### Upcoming improvements
-- Fix a few things I suppose.
-- Eventually add it to PyPi, but it's not my current goal.
-
 ### Examples
-- **Basic use:** if you want to look issues and pull requests opened in the last 7 days in some user's repositories, just write `github-pulls -u username -d 7`.
-- The python/javascript code platform [CheckiO](https://checkio.org) allows users to create their own code mission with a github repository. Then, it's hard to follow all pull requests and issues since they are in more than 300 differents repositories. This command line tool is useful to keep track of potential changes in these repositories. It only needs a json file of the repos to watch, [this one](example/CheckiO.json) for example. **Customizable use with json file:** `github-pulls -j example/CheckiO.json -d 31` will look issues and pulls opened in the last month in the repositories given in `example/CheckiO.json` ; or you can do `github-pulls -d 31` if you are in `example` folder and `CheckiO.json` is the only json in it.
+**Example:** `github-pulls -d 90 -s repo -j repos-selections.json -u pallets` will look in all repositories of [pallets](https://github.com/pallets) and the selections of repos given in the json file for pull requests and issues opened in the last 90 days, and they will be sorted by user/repository.
 
+The python/javascript code platform [CheckiO](https://checkio.org) allows users to create their own code mission with a github repository. Then, it's hard to follow all pull requests and issues since they are in more than 400 differents repositories. This command line tool is useful to keep track of potential changes in these repositories. It only needs a json file of the repos to watch, [this one](example/CheckiO.json) for example.
+
+**ChekiO example:** `github-pulls --user oduvan --json example/CheckiO.json -days 31` will look issues and pulls opened in the last month in the repositories given in `example/CheckiO.json` and all oduvan's repositories.
+
+#### What does the result webpage look like?
 ![Rendering example](example/rendering_example.png "Rendering example")
