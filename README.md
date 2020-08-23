@@ -1,7 +1,7 @@
 # GitHub Pulls
 This command line tool allow to efficiently go through a lot of github _public_ repositories (from given users and given repos in a json file) to find pull requests and issues, and render results in a single webpage with links to them.
 
-You can restrict the search to the lastest days, and sort the results according to opening dates, (owner, repo), or author.
+You can restrict the search to the latest days, and sort the results according to opening dates, (owner, repo), or author.
 
 ### Requirements
 - `python 3.7+` because `asyncio.run` has been added to version 3.7.
@@ -67,9 +67,9 @@ Options:
 ### Examples
 **Example:** `github-pulls -d 90 -s repo -j repos-selections.json -u pallets` will look in all repositories of [pallets](https://github.com/pallets) and the selections of repos given in the json file for pull requests and issues opened in the last 90 days, and they will be sorted by user/repository.
 
-The python/javascript code platform [CheckiO](https://checkio.org) allows users to create their own code mission with a github repository. Then, it's hard to follow all pull requests and issues since they are in more than 400 differents repositories. This command line tool is useful to keep track of potential changes in these repositories. It only needs a json file of the repos to watch, [this one](example/CheckiO.json) for example.
+The python/javascript code platform [CheckiO](https://checkio.org) allows users to create their own code mission with a github repository. Then, it's hard to follow all pull requests and issues since they are in more than 400 different repositories. This command line tool is useful to keep track of potential changes in these repositories. It only needs a json file of the repos to watch, [this one](example/CheckiO.json) for example.
 
-**ChekiO example:** `github-pulls --user oduvan --json example/CheckiO.json -days 31` will look issues and pulls opened in the last month in the repositories given in `example/CheckiO.json` and all oduvan's repositories.
+**CheckiO example:** `github-pulls --user oduvan --json example/CheckiO.json -days 31` will look issues and pulls opened in the last month in the repositories given in `example/CheckiO.json` and all oduvan's repositories.
 
 #### What does the result webpage look like?
 ![Rendering example](example/rendering_example.png "Rendering example")
