@@ -40,7 +40,7 @@
 		"checkio-mission-ryerson-letter-grade",
 		"checkio-mission-tutorial"
 	],
-	"CheckiO Missions": [
+	"CheckiO-Missions": [
 		"checkio-mission-88th-puzzle",
 		"checkio-mission-achilles-tortoise",
 		"checkio-mission-amsco-cipher",
@@ -301,7 +301,7 @@
 		"checkio-mission-yaml-01-simple-dict",
 		"checkio-mission-yaml-02-more-types"
 	],
-	"Philippe Cholet": [
+	"Philippe-Cholet": [
 		"checkio-mission-filling",
 		"checkio-mission-inertia",
 		"checkio-mission-light-up",

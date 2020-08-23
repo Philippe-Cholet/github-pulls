@@ -8,22 +8,21 @@ from traceback import format_exc
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import aiohttp
-import bs4
+import bs4  # It will import lxml.
 import click
-# import lxml
 
 __VERSION__ = '2.0.0'
 GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
 USER_AGENT = f'github-pulls {__VERSION__}'
 API_ERRORS = {
-    401: 'Wrong authentication?',
+    401: 'Wrong token authentication?',
     403: '''You probably reached the rate limit of the github API:
   * 60 requests per hour (IP related) if you're not authenticated.
   * 5000 requests per hour (account related) if you are.
 This tool does a request for every hundred repositories that users have so:
   * JSON file maybe have too much users or you use this tool too much.
-  * you can authenticate or wait some time.''',
+  * you can authenticate with a personal token or wait some time.''',
     404: 'Maybe one user does not exists.',
 }
 
@@ -102,8 +101,6 @@ def html_table(datas: List[GithubData], what: str) -> str:
     assert what in ('pull request', 'issue')
     any_label = any(data.labels for data in datas)
     any_milestone = any(data.milestones for data in datas)
-    th_labels = '<th>Labels</th>' if any_label else ''
-    th_milestones = '<th>Milestones</th>' if any_milestone else ''
     tr_lines = ''.join(
         data.tr_line(any_label, any_milestone)
         for data in datas
@@ -115,8 +112,8 @@ def html_table(datas: List[GithubData], what: str) -> str:
         <th>Username</th>
         <th>Repository</th>
         <th>{what.capitalize()}</th>
-        {th_labels}
-        {th_milestones}
+        {'<th>Labels</th>' if any_label else ''}
+        {'<th>Milestones</th>' if any_milestone else ''}
         <th>Opened by</th>
         <th>Since</th>
     </thead>
@@ -167,7 +164,7 @@ def github_number_of_issues(
     user: str,
     repo: str,
 ) -> int:
-    """ Find the number of issues in soup of '/user/repo/pulls'. """
+    """Find the number of issues in soup of '/user/repo/pulls'."""
     # <a ... href="/USER/REPO/issues" ...>
     #     <svg ...>...</svg>
     #     <span itemprop="name">Issues</span>
@@ -255,6 +252,8 @@ async def get_repos_to_watch_from(
 ) -> Set[Repo]:
     """Get all repositories of all users, thanks to the Github API."""
     repos: Set[Repo] = set()
+    if not users:
+        return repos
 
     async def task(user: str) -> None:
         for page in it.count(1):
@@ -272,7 +271,10 @@ async def get_repos_to_watch_from(
     if token is not None:
         headers['Authorization'] = f'token {token}'
 
-    async with aiohttp.ClientSession(headers=headers) as session:
+    async with aiohttp.ClientSession(
+        headers=headers,
+        raise_for_status=True,
+    ) as session:
         await asyncio.gather(*map(task, users))
         return repos
 
@@ -283,19 +285,19 @@ async def get_repos(
     token: Optional[str],
 ) -> List[Repo]:
     """List repos to watch according to given users/config."""
-    if users:
-        repos = await get_repos_to_watch_from(users, token)
-    elif config is not None:
-        users = list(config)
-        repos = {
+    repos = await get_repos_to_watch_from(users, token)
+    if config is not None:
+        # Remove users from config if we previously look for all its repos.
+        conf_users = config.keys() - set(users)
+        conf_repos = {
             (user, repo)
-            for user, repos in config.items()
-            for repo in repos
+            for user, repos_selection in config.items()
+            if user in conf_users
+            for repo in repos_selection
         }
-        # Will only parse wanted repos with issues/pulls, thanks to github api.
-        repos &= await get_repos_to_watch_from(users, token)
-    else:
-        raise click.Abort('Nothing to do without users or json file.')
+        # Only parse the ones with issues/pulls, thanks to github api.
+        conf_repos &= await get_repos_to_watch_from(list(conf_users), token)
+        repos |= conf_repos
     return list(repos)
 
 
@@ -352,6 +354,8 @@ async def main(
     """Search repositories and list recent pull requests and issues in them."""
     try:
         repos = await get_repos(users, config, token)
+        if not repos:
+            raise click.Abort('Nothing to do without users or json file.')
         pulls, issues = await opened(repos, days)
         return pulls, issues
     except aiohttp.ClientResponseError as error:
@@ -359,8 +363,8 @@ async def main(
         code = error.status
         message = f'ERROR {code} {error_type(code)}: {url}\n{error.message}'
         click.echo(message, err=True)
-        if code in GITHUB_API:
-            click.echo(GITHUB_API[code], err=True)
+        if code in API_ERRORS:
+            click.echo(API_ERRORS[code], err=True)
         raise click.Abort()
 
 
@@ -387,11 +391,16 @@ def load_config(ctx, param, config: Optional[str]) -> Optional[JSONConfig]:
     return data
 
 
+epilog = '''
+Give github usernames or a json file {user: repositories}.
+Authenticate if you had an error message for (repeated?) big requests
+(auth needs a token created at "https://github.com/settings/tokens").
+'''
+
+
 @click.command(
     context_settings={'help_option_names': ['-h', '--help']},
-    epilog='''Give github usernames or a json file {user: repositories}.
-    Authenticate if you had an error message for (repeated?) big requests
-    (auth needs a token created at "https://github.com/settings/tokens").''',
+    epilog=epilog,
 )
 @click.option(
     '--user',
