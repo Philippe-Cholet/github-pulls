@@ -11,10 +11,10 @@ import aiohttp
 import bs4  # It will import lxml.
 import click
 
-__VERSION__ = '2.0.0'
+__version__ = '2.0.0'
 GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
-USER_AGENT = f'github-pulls {__VERSION__}'
+USER_AGENT = f'github-pulls {__version__}'
 API_ERRORS = {
     401: 'Wrong token authentication?',
     403: '''You probably reached the rate limit of the github API:
